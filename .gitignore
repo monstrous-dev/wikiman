@@ -1,0 +1,6 @@
+*.log
+.DS_Store
+node_modules/
+
+# dev-local working artifacts — not part of the package
+readme.html

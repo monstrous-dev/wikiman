@@ -1,0 +1,29 @@
+{
+  "name": "wikiman",
+  "version": "0.1.0",
+  "description": "Wikiman — a pi extension that gives every project a living OKF knowledge wiki: wiki-first lookups, wiki_* recording tools, staleness checks, and an HTML viewer.",
+  "keywords": ["pi-package", "pi", "pi-extension", "wikiman", "wiki", "knowledge-base", "okf"],
+  "license": "MIT",
+  "author": {
+    "name": "monstrous-dev",
+    "url": "https://github.com/monstrous-dev"
+  },
+  "homepage": "https://github.com/monstrous-dev/wikiman",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/monstrous-dev/wikiman.git"
+  },
+  "bugs": {
+    "url": "https://github.com/monstrous-dev/wikiman/issues"
+  },
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"],
+    "skills": ["./skills"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "typebox": "*"
+  }
+}
