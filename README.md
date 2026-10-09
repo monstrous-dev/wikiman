@@ -80,9 +80,8 @@ that are machine-local by nature:
 
 1. The `wiki-recap` / `wiki-curator` agent prompts — copies ship in
    [`agents/`](agents/) of this repo. Copy them to `~/.pi/agent/agents/`.
-2. Our `intelligent-delegation` extension (the subagent runner). Not yet
-   published — without it, Wikiman still works fully; the recap just skips
-   itself with a notice.
+2. The sub-agent runner — published separately as
+   [`pi install git:github.com/monstrous-dev/agentman`](https://github.com/monstrous-dev/agentman).
 
 ## Security
 
