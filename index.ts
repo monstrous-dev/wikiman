@@ -21,6 +21,7 @@ import { readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { join, relative, dirname, basename, extname, resolve } from "node:path";
 import { generateWikiDataJs, generateWikiViewerHtml, serveWikiViewer, shutdownAllWikiServers } from "./viewer.js";
 
@@ -629,18 +630,20 @@ function getApi(): { pi: ExtensionAPI } {
 }
 
 // ---------------------------------------------------------------------------
-// End-of-turn recap (agent_end) — async wiki-recap subagent
+// End-of-turn recap (agent_end) — in-process completion (R1, self-contained)
 // ---------------------------------------------------------------------------
-// At the FINAL agent_end of a user turn we spawn the `wiki-recap` agent in a
-// SEPARATE process (via intelligent-delegation's runSingleSubagent) to mine the
-// turn for decisions / rules / learnings and record them. Because agent_end
-// fires once per agent RUN and a prompt can chain runs (prompt -> continue for
-// steer/retry/compaction/queued msgs), the spawn is DEBOUNCED: scheduled on
-// agent_end, cancelled by the next agent_start / compaction_start. Only the
-// last agent_end of the prompt fires. Fire-and-forget: the user never waits,
-// the parent session's context never grows. This replaces the old inline
-// classifyTurn + next-turn-nudge loop — the subagent both classifies AND
-// records in isolation.
+// At the FINAL agent_end of a user turn we make ONE model completion call that
+// mines the turn for decisions / rules / learnings / preferences / pages and
+// returns them as a JSON array. Deterministic code normalizes and writes the
+// notes through the same noteInto/notePage funnel the wiki_note_* tools use —
+// the prompt asks for the shape, the code guarantees it (never trust
+// LLM-authored paths or frontmatter). No agentman, no subagent: works on a
+// clean install of just this package. Because agent_end fires once per agent
+// RUN and a prompt can chain runs (prompt -> continue for steer/retry/
+// compaction/queued msgs), the call is DEBOUNCED: scheduled on agent_end,
+// cancelled by the next agent_start / compaction_start — only the last
+// agent_end of the prompt fires. Missing model/auth degrades silently; the
+// manual wiki_note_* tools are never blocked.
 
 // Set before any hidden/system dispatch (init auto-doc, staleness delegation
 // steer) so that turn's agent_end doesn't spuriously spawn a recap. Checked and
@@ -656,10 +659,11 @@ let suppressRecap = false;
 let recapTimer: ReturnType<typeof setTimeout> | undefined;
 const RECAP_DEBOUNCE_MS = 1200;
 
-const RECAP_AGENT = "wiki-recap";
-// ponytail: cap the transcript handed to the recap subagent — first ~8KB carries
-// the substance, keeps the spawn cheap.
+// ponytail: cap the transcript handed to the recap completion — first ~8KB
+// carries the substance, keeps the call cheap.
 const RECAP_MAX_CHARS = 8000;
+const RECAP_TIMEOUT_MS = 45_000;
+const RECAP_MAX_ATTEMPTS = 2;
 
 /** Extract text content from a single message object (user or assistant). */
 function messageText(msg: unknown): string {
@@ -701,26 +705,164 @@ function parentModelRef(ctx: any): string | undefined {
   return undefined;
 }
 
+// --- In-process recap (R1): prompt asks for the shape, code guarantees it ---
+
+interface RecapEnv {
+  cwd: string;
+  model: unknown;
+  modelRegistry: any;
+  notify: (msg: string, type?: "info" | "warning" | "error") => void;
+}
+
+const RECAP_PROMPT = (turnText: string): string =>
+  `You are this project's wiki-recap: decide what one finished coding turn taught us that is worth persisting to docs/wiki/, and return it as JSON.
+
+Record ONLY (be selective — routine work warrants an EMPTY array):
+- "decision" — MAJOR choice or direction shift: architecture, library selection, approach pivot, deprecation.
+- "rule" — reusable heuristic or "always do X" convention; name when it applies and the evidence.
+- "learning" — non-obvious fact, gotcha, or behavior discovered about this codebase.
+- "preference" — a stated user style/tool/convention preference.
+- "concept", "entity", "artifact" — a new project page: Concept = abstract idea, Entity = concrete named thing (endpoint/service/model), Artifact = deliverable.
+
+Return ONLY a JSON array — no prose, no markdown fences:
+[{"type":"learning","title":"Short title","body":"markdown body, 1-3 short paragraphs","tags":["optional"]}]
+
+--- TURN ---
+${turnText}
+--- END TURN ---`;
+
+const RECAP_TYPE_MAP: Record<
+  string,
+  | { kind: "note"; folder: "learnings" | "rules" | "decisions" | "preferences"; type: string }
+  | { kind: "page"; pageType: "Concept" | "Entity" | "Artifact" }
+> = {
+  learning: { kind: "note", folder: "learnings", type: "Learning" },
+  rule: { kind: "note", folder: "rules", type: "Rule" },
+  decision: { kind: "note", folder: "decisions", type: "Decision" },
+  preference: { kind: "note", folder: "preferences", type: "Preference" },
+  concept: { kind: "page", pageType: "Concept" },
+  entity: { kind: "page", pageType: "Entity" },
+  artifact: { kind: "page", pageType: "Artifact" },
+};
+
+interface RecapNote { type: string; title: string; body: string; tags?: string[] }
+
+/** Parse the model's reply into validated notes; null = not a parseable JSON array. Unknown types and empty fields are dropped. */
+function parseRecapNotes(text: string): RecapNote[] | null {
+  const cleaned = text.replace(/```(?:json)?/gi, ""); // fences tolerated even though the prompt forbids them
+  const start = cleaned.indexOf("[");
+  const end = cleaned.lastIndexOf("]");
+  if (start === -1 || end <= start) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const notes: RecapNote[] = [];
+  for (const raw of parsed) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    const type = typeof r.type === "string" ? r.type.trim().toLowerCase() : "";
+    const title = typeof r.title === "string" ? r.title.trim() : "";
+    const body = typeof r.body === "string" ? r.body.trim() : "";
+    if (!RECAP_TYPE_MAP[type] || !title || !body) continue; // unknown type / empty fields → skip
+    const tags = Array.isArray(r.tags) ? r.tags.filter((t): t is string => typeof t === "string") : undefined;
+    notes.push({ type, title, body, tags: tags && tags.length ? tags : undefined });
+  }
+  return notes;
+}
+
+/** Extract text from a completion result (hamster pattern). */
+function completionText(result: unknown): string {
+  const msg = result as { content?: Array<{ type?: string; text?: string }> };
+  if (!msg?.content || !Array.isArray(msg.content)) return "";
+  return msg.content.filter((c) => c?.type === "text").map((c) => c?.text ?? "").join("\n").trim();
+}
+
+async function completeOnce(env: RecapEnv, prompt: string): Promise<string> {
+  const result = await env.modelRegistry.complete(
+    env.model,
+    { messages: [{ role: "user", content: [{ type: "text", text: prompt }] }] } as Parameters<typeof env.modelRegistry.complete>[1],
+    { signal: AbortSignal.timeout(RECAP_TIMEOUT_MS), sessionId: randomUUID() },
+  );
+  const asMsg = result as { stopReason?: string; errorMessage?: string };
+  if (asMsg?.stopReason === "error" || asMsg?.stopReason === "aborted") {
+    throw new Error(asMsg?.errorMessage || `recap request ${asMsg?.stopReason}`);
+  }
+  return completionText(result);
+}
+
+/** Fire-and-forget inline recap. Never throws — every failure is notified or silent. */
+async function runInlineRecap(env: RecapEnv, turnText: string): Promise<void> {
+  const snippet = turnText.length > RECAP_MAX_CHARS ? turnText.slice(0, RECAP_MAX_CHARS) + "\n[...truncated]" : turnText;
+  let notes: RecapNote[] | null = null;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= RECAP_MAX_ATTEMPTS && notes === null; attempt++) {
+    const retry = attempt > 1
+      ? "\n\nIMPORTANT: your previous reply was not parseable. Return ONLY the raw JSON array — no prose, no fences."
+      : "";
+    try {
+      notes = parseRecapNotes(await completeOnce(env, RECAP_PROMPT(snippet) + retry));
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  if (notes === null) {
+    if (lastErr) env.notify(`wiki recap failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`, "warning");
+    return;
+  }
+  if (notes.length === 0) {
+    env.notify("wiki recap: nothing to record.", "info");
+    return;
+  }
+  const counts: Record<string, number> = {};
+  for (const n of notes) {
+    const map = RECAP_TYPE_MAP[n.type];
+    if (!map) continue;
+    try {
+      if (map.kind === "note") await noteInto(env.cwd, map.folder, map.type, n.title, n.body, n.tags);
+      else await notePage(env.cwd, map.pageType, n.title, n.body, n.tags);
+      counts[n.type] = (counts[n.type] ?? 0) + 1;
+    } catch {
+      // one bad note must not kill the rest
+    }
+  }
+  const summary = Object.entries(counts).map(([t, c]) => `${c} ${t}${c > 1 ? "s" : ""}`).join(", ");
+  env.notify(summary ? `wiki recap: recorded ${summary}.` : "wiki recap: nothing to record.", "info");
+}
+
+/** Task prompt for when the curator subagent is unavailable: the session LLM
+ *  performs the wiki sync itself with its own tools. */
+function curatorFallbackPrompt(task: string): string {
+  return `Wiki update (curator subagent unavailable — perform it yourself in this turn; you have the wiki_* tools plus read/edit/bash):
+
+--- BEGIN TASK ---
+${task}
+--- END TASK ---
+
+House rules: dedupe first (wiki_search before writing), edit existing concepts in place instead of duplicating, never invent frontmatter types, then call wiki_mark_synced(). Do NOT narrate this task — just do it and confirm in one line.`;
+}
+
 /**
- * Fire-and-forget spawn of the wiki-recap agent. Dynamic-imports the
- * intelligent-delegation runner so wiki-context still loads if that extension is
- * absent (graceful no-op + notify). Resolves silently; never throws to caller.
- */
-/**
- * Debounced wrapper around spawnRecap: clears any pending spawn and re-arms it.
+ * Debounced wrapper around runInlineRecap: clears any pending run and re-arms it.
  * A subsequent agent_start / compaction_start (i.e. a continuation) cancels
- * via clearRecapTimer(), so only the last agent_end of a prompt spawns.
+ * via clearRecapTimer(), so only the last agent_end of a prompt runs.
+ * Timer-scheduled promises outlive their caller — the .catch below is not
+ * optional (an unhandled rejection here has killed a session before).
  */
-function scheduleRecap(
-  cwd: string,
-  turnText: string,
-  parentModel: string | undefined,
-  notify?: (msg: string, type?: "info" | "warning" | "error") => void,
-): void {
+function scheduleRecap(env: RecapEnv, turnText: string): void {
   clearRecapTimer();
   recapTimer = setTimeout(() => {
     recapTimer = undefined;
-    spawnRecap(cwd, turnText, parentModel, notify);
+    runInlineRecap(env, turnText).catch((e) => {
+      try {
+        env.notify(`wiki recap failed: ${e instanceof Error ? e.message : String(e)}`, "warning");
+      } catch {
+        /* stale ctx */
+      }
+    });
   }, RECAP_DEBOUNCE_MS);
 }
 
@@ -763,23 +905,12 @@ function clearRecapTimer(): void {
   }
 }
 
-function spawnRecap(
-  cwd: string,
-  turnText: string,
-  parentModel: string | undefined,
-  notify?: (msg: string, type?: "info" | "warning" | "error") => void,
-): void {
-  const snippet = turnText.length > RECAP_MAX_CHARS ? turnText.slice(0, RECAP_MAX_CHARS) + "\n[...truncated]" : turnText;
-  const task =
-    `Review the following coding-session turn and record any MAJOR decisions, reusable rules/heuristics, or learnings into docs/wiki/. Also scan for frontend UX/CRUD/action changes that benefit end-users and log them via wiki_changelog with user-facing fields. Also detect new project concepts, entities, or artifacts and document them via wiki_note_page. Be selective — routine work warrants zero writes. Dedupe via wiki_search before writing wiki concepts. Then wiki_validate, wiki_changelog (with user-facing fields: category, user, what, why, next — see tool description), wiki_timestamp. See your system prompt for details.\n\n` +
-    `--- TURN ---\n${snippet}\n--- END TURN ---`;
-  spawnWikiAgent(cwd, RECAP_AGENT, task, parentModel, notify);
-}
-
 /**
- * Fire-and-forget spawn of a wiki subagent (wiki-recap, wiki-curator, …) via
- * the intelligent-delegation runner. Shared by the debounced recap and the
- * /wiki:update command. Notifies on completion; never throws to caller.
+ * Fire-and-forget spawn of the wiki-curator subagent via the
+ * intelligent-delegation runner (/wiki:update only — the recap is in-process).
+ * When the runner or the agent prompt is unavailable, calls fallbackSteer so
+ * the session LLM performs the update itself. Notifies on completion; never
+ * throws to caller.
  */
 function spawnWikiAgent(
   cwd: string,
@@ -787,6 +918,7 @@ function spawnWikiAgent(
   task: string,
   parentModel: string | undefined,
   notify?: (msg: string, type?: "info" | "warning" | "error") => void,
+  fallbackSteer?: (task: string) => void,
 ): void {
   (async () => {
     let runner: any;
@@ -797,12 +929,14 @@ function spawnWikiAgent(
         import("../intelligent-delegation/agents.ts"),
       ]);
     } catch {
-      notify?.(`wiki ${agentName} skipped: intelligent-delegation extension not available.`, "warning");
+      notify?.(`wiki ${agentName} unavailable (intelligent-delegation extension not installed) — falling back to an in-session update.`, "warning");
+      fallbackSteer?.(task);
       return;
     }
     const agents = agentsMod.discoverAgents(cwd, "both").agents;
     if (!agents.some((a: any) => a.name === agentName)) {
-      notify?.(`wiki ${agentName} skipped: "${agentName}" agent not found in ~/.pi/agent/agents.`, "warning");
+      notify?.(`wiki ${agentName} prompt not found in ~/.pi/agent/agents — falling back to an in-session update.`, "warning");
+      fallbackSteer?.(task);
       return;
     }
     // ponytail: stub details callback — we don't render, just notify on done.
@@ -919,9 +1053,9 @@ async function runStalenessCheck(rawCtx: { cwd: string; ui: ExtensionAPI extends
   // read as noise in the chat ("Do NOT describe the delegation", etc.).
   const delegationPrompt =
     `Wiki staleness: ${changed.length} file(s) changed.\n` +
-    `Delegate this to the wiki-curator agent in async mode with this task:\n\n` +
-    `--- BEGIN TASK ---\n${task}\n--- END TASK ---\n\n` +
-    `Do NOT describe the delegation. Just call delegate with mode "async" and continue with the user's next request.`;
+    `If the "delegate" tool is available: delegate this to the wiki-curator agent in async mode with the task below. Do NOT describe the delegation — continue with the user's next request.\n` +
+    `If it is NOT available: perform the task yourself in this turn using your wiki_* tools (dedupe first, then wiki_mark_synced).\n\n` +
+    `--- BEGIN TASK ---\n${task}\n--- END TASK ---\n`;
 
   // RPC mode (e.g. a delegated wiki-curator sub-agent): there is no user to
   // confirm with — and pi core awaits session_start handlers BEFORE attaching
@@ -1052,12 +1186,12 @@ ${memory ? `\n## memory.md — the live contract (recent decisions, rules, conve
 - See the okf-open-knowledge-format skill for the spec.
 
 ## End-of-turn recap (automatic)
-At the end of each turn this extension spawns the \`wiki-recap\` subagent in the
-background. It mines the turn for MAJOR decisions, reusable rules/heuristics,
-learnings, frontend UX changes, AND new project concepts/entities/artifacts, and
-records them into docs/wiki/ on its own — you do NOT need to record these during
-the turn. You can still call the wiki_note_* tools yourself if something is urgent
-or explicit, but routine capture is handled for you.
+At the end of each turn this extension runs a background recap: one completion
+call mines the turn for MAJOR decisions, reusable rules, learnings, preferences,
+and new concepts/entities/artifacts, and writes them into docs/wiki/ on its own
+— you do NOT need to record these during the turn. You can still call the
+wiki_note_* tools yourself if something is urgent or explicit, but routine
+capture is handled for you.
 
 ## Proactive projectbase documentation
 When you BUILD or MODIFY a module, endpoint, data model, or subsystem, ASK
@@ -1077,6 +1211,19 @@ ${SENTINEL}`;
 
 async function initBundle(cwd: string): Promise<void> {
   const root = wikiDir(cwd);
+  // F1 (ensure-semantics): a re-init only ADDS missing scaffold files —
+  // authored content (overview, glossary, concepts…) is never overwritten,
+  // and last_updated.md is never reset (that would fake a fresh sync).
+  const writeIfMissing = async (p: string, content: string, enc: BufferEncoding = "utf8"): Promise<void> => {
+    if (existsSync(p)) return;
+    await mkdir(dirname(p), { recursive: true });
+    await writeFile(p, content, enc);
+  };
+  // The auto-doc LLM pass overwrites overview/glossary/file-tree, so it only
+  // runs when the bundle is fresh (none of the three pre-existed).
+  const hadAuthored = existsSync(join(root, "overview.md"))
+    || existsSync(join(root, "glossary.md"))
+    || existsSync(join(root, "architecture", "file-tree.md"));
   // Why: typed folders (learnings/preferences/decisions/rules) are created on
   // demand by wiki_note_* — scaffolding them empty trips W5 (empty folder).
   await mkdir(join(root, "pages", "concepts"), { recursive: true });
@@ -1102,19 +1249,19 @@ async function initBundle(cwd: string): Promise<void> {
     .filter(([d]) => existsSync(join(root, String(d))))
     .map(([d, t, desc]) => `- [${t}](./${d}/) — ${desc}`)
     .join("\n");
-  await writeFile(
+  await writeIfMissing(
     join(root, "index.md"),
     `${indexFrontmatter()}# Project Knowledge Wiki\n\nAn [OKF](https://github.com/earendil-works/okf) bundle documenting this project.\n\n- [Overview](./overview.md) — What this project contains and its structure\n- [File tree](./architecture/file-tree.md) — Complete project file listing\n- [Glossary](./glossary.md) — Key terms for this project\n${typedLinks ? typedLinks + "\n" : ""}- [Pages](./pages/) — Concepts, entities, and artifacts of this project\n`,
     "utf8",
   );
-  await writeFile(join(root, "overview.md"), `${buildFrontmatter({ type: "System Overview", title: "Overview", description: "What this project contains and its structure.", timestamp: now })}\n# Overview\n\n_Describe the project here._\n`, "utf8");
-  await writeFile(join(root, "log.md"), `# Update Log\n\n## ${day}\n- **Creation**: Initial OKF bundle scaffolded by /wiki:init.\n`, "utf8");
-  await writeFile(join(root, LAST_UPDATED), `# Last wiki sync\n\n${now}\n`, "utf8");
-  await writeFile(join(root, "glossary.md"), `${buildFrontmatter({ type: "Glossary", title: "Glossary", description: "Key terms for this project.", timestamp: now })}\n# Glossary\n\n| Term | Definition |\n|------|------------|\n| _term_ | _definition_ |\n`, "utf8");
-  await writeFile(join(root, "pages", "index.md"), `# Pages\n\nKnowledge graph: concepts, entities, and artifacts that make up this project.\n\n- [Concepts](./concepts/) — Abstract ideas, definitions, and categories\n- [Entities](./entities/) — Concrete named things, systems, tools, and records\n- [Artifacts](./artifacts/) — Documents, diagrams, code files, and deliverables\n`, "utf8");
-  await writeFile(join(root, "pages", "concepts", "index.md"), `# Concepts\n\n_Abstract ideas and definitions will be listed here._\n`, "utf8");
-  await writeFile(join(root, "pages", "entities", "index.md"), `# Entities\n\n_Concrete named things will be listed here._\n`, "utf8");
-  await writeFile(join(root, "pages", "artifacts", "index.md"), `# Artifacts\n\n_Documents, diagrams, and deliverables will be listed here._\n`, "utf8");
+  await writeIfMissing(join(root, "overview.md"), `${buildFrontmatter({ type: "System Overview", title: "Overview", description: "What this project contains and its structure.", timestamp: now })}\n# Overview\n\n_Describe the project here._\n`, "utf8");
+  await writeIfMissing(join(root, "log.md"), `# Update Log\n\n## ${day}\n- **Creation**: Initial OKF bundle scaffolded by /wiki:init.\n`, "utf8");
+  await writeIfMissing(join(root, LAST_UPDATED), `# Last wiki sync\n\n${now}\n`, "utf8");
+  await writeIfMissing(join(root, "glossary.md"), `${buildFrontmatter({ type: "Glossary", title: "Glossary", description: "Key terms for this project.", timestamp: now })}\n# Glossary\n\n| Term | Definition |\n|------|------------|\n| _term_ | _definition_ |\n`, "utf8");
+  await writeIfMissing(join(root, "pages", "index.md"), `# Pages\n\nKnowledge graph: concepts, entities, and artifacts that make up this project.\n\n- [Concepts](./concepts/) — Abstract ideas, definitions, and categories\n- [Entities](./entities/) — Concrete named things, systems, tools, and records\n- [Artifacts](./artifacts/) — Documents, diagrams, code files, and deliverables\n`, "utf8");
+  await writeIfMissing(join(root, "pages", "concepts", "index.md"), `# Concepts\n\n_Abstract ideas and definitions will be listed here._\n`, "utf8");
+  await writeIfMissing(join(root, "pages", "entities", "index.md"), `# Entities\n\n_Concrete named things will be listed here._\n`, "utf8");
+  await writeIfMissing(join(root, "pages", "artifacts", "index.md"), `# Artifacts\n\n_Documents, diagrams, and deliverables will be listed here._\n`, "utf8");
 
   // Template reference for page authors
   const templatesContent = `---
@@ -1189,7 +1336,7 @@ a stable structure so pages are consistent, skimmable, and well-linked.
 - Generated from: [what data, process, or session produced it]
 \`\`\`
 `;
-  await writeFile(join(root, "pages", "TEMPLATES.md"), templatesContent, "utf8");
+  await writeIfMissing(join(root, "pages", "TEMPLATES.md"), templatesContent, "utf8");
 
   // Generate file tree
   const archDir = join(root, "architecture");
@@ -1198,14 +1345,16 @@ a stable structure so pages are consistent, skimmable, and well-linked.
   // Why: file-tree.md must be born conformant — a bare tree body fails E1
   // (no frontmatter) and W1 (no title/description in the nav map).
   const tree = await generateFileTree(cwd, patterns);
-  await writeFile(
+  await writeIfMissing(
     join(archDir, "file-tree.md"),
     `${buildFrontmatter({ type: "Artifact", title: "File tree", description: "Complete project file listing with per-file descriptions.", timestamp: now })}\n${tree}`,
     "utf8",
   );
 
-  // Ask LLM to auto-generate overview + glossary + file tree descriptions
-  try {
+  // Ask LLM to auto-generate overview + glossary + file tree descriptions —
+  // only for a FRESH bundle. On a re-init, authored overview/glossary and the
+  // described file tree are kept exactly as-is (F1: no content destruction).
+  if (!hadAuthored) try {
     const scan = await scanProjectContents(cwd);
     const llmPrompt = `I've scanned the project at "${cwd}". Based on the summary below, write content for a knowledge wiki (docs/wiki/) that documents this project.\n\nProject profile:\n${JSON.stringify(scan, null, 2)}\n\nAlso fill in the [] description placeholders for each entry in this file tree.\n\nOutput exactly this format:\n\n## Overview\n(2-4 paragraphs describing the project's contents and organization)\n\n## Glossary\n| Term | Definition |\n|------|------------|\n\n## File tree descriptions\npath — description\npath — description`;
 
@@ -1687,13 +1836,12 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_start", async () => { clearRecapTimer(); });
   pi.on("compaction_start", async () => { clearRecapTimer(); });
 
-  // --- agent_end: debounced fire-and-forget wiki-recap subagent ---
-  // Schedules (does not immediately spawn) the wiki-recap agent. The spawn is
-  // cancelled if a continuation follows (see agent_start / compaction_start
-  // above), so it only fires when the full turn is done. Skips hidden/internal
-  // turns (suppressRecap) and trivial turns (<80 chars). Dynamic import +
-  // graceful fallback if intelligent-delegation or the wiki-recap agent is
-  // unavailable.
+  // --- agent_end: debounced fire-and-forget in-process wiki recap ---
+  // Schedules (does not immediately run) one completion call that mines the
+  // turn and writes notes. Cancelled if a continuation follows (see
+  // agent_start / compaction_start above), so it only fires when the full
+  // turn is done. Skips hidden/internal turns (suppressRecap) and trivial
+  // turns (<80 chars). No subagent, no agentman — self-contained (R1).
   pi.on("agent_end", async (event, ctx) => {
     if (!ctx.isProjectTrusted()) return;
     if (!existsSync(wikiDir(ctx.cwd))) return;
@@ -1716,8 +1864,15 @@ export default function (pi: ExtensionAPI) {
     // notify fires 1.2s+ after this hook returns (debounce + subagent runtime);
     // by then the session may have been replaced/reloaded — staleSafeCtx keeps
     // the stale throw from crashing pi.
+    // R1: capture the model machinery synchronously — the debounced callback
+    // must not touch a possibly-stale ctx. No model / no auth → silent skip
+    // (the manual wiki_note_* tools remain fully usable).
+    const model = (ctx as any).model;
+    const modelRegistry = (ctx as any).modelRegistry;
+    if (!model || !modelRegistry) return;
+    if (!(modelRegistry.hasConfiguredAuth?.(model) ?? true)) return;
     const notify = (msg: string, type?: "info" | "warning" | "error") => staleSafeCtx(ctx).ui.notify(msg, type);
-    scheduleRecap(ctx.cwd, turnText, parentModelRef(ctx), notify);
+    scheduleRecap({ cwd: ctx.cwd, model, modelRegistry, notify }, turnText);
   });
 
   // -------------------------------------------------------------------------
@@ -2443,6 +2598,16 @@ export default function (pi: ExtensionAPI) {
             try { ctx.ui.setStatus(FOOTER_KEY, undefined); } catch { /* stale */ }
             staleSafeCtx(ctx).ui.notify(msg, type);
           },
+          (task) => {
+            // No agentman / no curator prompt: the session LLM performs the
+            // sync itself (it has the wiki_* tools). Same suppressRecap rule
+            // as the staleness steer — this hidden turn must not spawn a recap.
+            suppressRecap = true;
+            getApi().pi.sendMessage(
+              { customType: "wiki-curator-fallback", content: curatorFallbackPrompt(task), display: false },
+              { triggerTurn: true, deliverAs: "steer" },
+            );
+          },
         );
       } catch (e) {
         ctx.ui.setStatus(FOOTER_KEY, undefined);
@@ -2470,13 +2635,13 @@ export default function (pi: ExtensionAPI) {
       }
       try {
         if (existsSync(wikiDir(ctx.cwd))) {
-          const ok = ctx.hasUI ? await ctx.ui.confirm("Wiki exists", "docs/wiki/ already exists. Re-init (will not overwrite existing concept files)?") : false;
+          const ok = ctx.hasUI ? await ctx.ui.confirm("Wiki exists", "docs/wiki/ already exists. Add missing scaffold files? Existing content is never overwritten.") : false;
           if (!ok) return;
         }
         await initBundle(ctx.cwd);
         // Explicit init overrides an earlier decline.
         saveOmitted(loadOmitted().filter((d) => d !== ctx.cwd));
-        ctx.ui.notify("docs/wiki/ scaffolded.", "info");
+        ctx.ui.notify("docs/wiki/ ready — missing scaffold files added, existing content kept.", "info");
       } catch (e) {
         ctx.ui.notify(`wiki:init failed: ${e instanceof Error ? e.message : String(e)}`, "error");
       }

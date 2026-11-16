@@ -234,9 +234,55 @@ timestamp: "2026-11-16T08:40:12.625Z"
 ├── README.md [Project README — features, install, how it works, security]
 └── viewer.ts [Generates the self-contained HTML wiki viewer and serves it on localhost]
 `,
+  "decisions/disconnect-reconnect-state-lives-in-agent-home-keyed-per-cwd.md": `---
+type: Decision
+title: Disconnect/reconnect state lives in agent home, keyed per cwd
+description: Context
+tags: [disconnect, reconnect, state, registries, per-machine]
+status: accepted
+supersedes: "[]"
+timestamp: "2026-11-16T08:52:53.151Z"
+---
+
+# Disconnect/reconnect state lives in agent home, keyed per cwd
+
+## Context
+
+User asked for a way to pause wikiman for a project **without deleting its \`docs/wiki/\` bundle** — "stop being proactive" had to be decoupled from "remove the wiki". Disconnect state needed a home, and the choice determines its semantics.
+
+## Decision
+
+Disconnect state lives in **agent home**: \`DISCONNECTED_FILE\` = \`~/.pi/agent/.wiki-disconnected.json\`, a flat JSON array of absolute cwd paths, loaded/saved via \`loadDisconnected\` / \`saveDisconnected\` / \`isDisconnected\` helpers. This mirrors the existing per-machine registries (\`.wiki-omitted.json\` for declined-init folders, \`.wiki-asked.json\` for ask-later state). Guards sit at all five proactive surfaces:
+
+- \`before_agent_start\` — no context injection
+- \`session_start\` — no staleness check / init-ask; footer shows \`wiki: disconnected\`
+- \`agent_end\` — no recap spawn; pending debounced recap cancelled
+- \`/wiki:update\`, \`/wiki:init\` — refuse with a reconnect hint
+
+Still functional while disconnected: \`docs/wiki/\` bundle untouched on disk, \`/wiki\` viewer, and all \`wiki_get\` / \`wiki_search\` / \`wiki_related\` lookups. Both commands enforce the trust gate and refuse in git worktrees (dormancy rule).
+
+## Alternatives considered
+
+- **Repo-local marker** (e.g. \`docs/wiki/.disconnected\`) — would make disconnect survive sync across machines and be visible to collaborators. Offered to the user as a switch; rejected for now because disconnect is a *per-machine user preference* ("this machine finds this wiki noisy"), not a property of the project, and the bundle should stay pure project content.
+
+## Rationale
+
+Consistency with the two existing registries in agent home, and correct default semantics: reconnecting on another machine (fresh clone) should not inherit a muted wiki.
+
+## Consequences
+
+- Disconnect does **not** survive across machines — if cross-machine semantics are wanted later, migrate to a repo-local marker.
+- The state file is keyed by absolute cwd; moving/renaming a project folder effectively disconnects the new path and orphans the old entry (harmless stale data).
+- Implemented in \`index.ts\` (single source of truth); type-check verified 0 new errors (21 pre-existing before and after).
+
+## Source
+
+- \`index.ts\` — \`DISCONNECTED_FILE\`, \`loadDisconnected\` / \`saveDisconnected\` / \`isDisconnected\`, and the five guard sites
+`,
   "decisions/index.md": `# Decisions
 
 - [Update propagation: okf_version-gated additive bundle migrations + prompt-in-package](./update-propagation-okf-version-gated-additive-bundle-migrati.md) - Context
+- [Disconnect/reconnect state lives in agent home, keyed per cwd](./disconnect-reconnect-state-lives-in-agent-home-keyed-per-cwd.md) - Context
 `,
   "decisions/update-propagation-okf-version-gated-additive-bundle-migrati.md": `---
 type: Decision
@@ -315,7 +361,7 @@ okf_version: "0.1"
 <!-- wiki-nav:start -->
 ## Navigation map
 
-Auto-generated detailed index of every docs/wiki/ concept — the map the LLM uses to locate information. 4 concept(s). Regenerated on init and on wiki_mark_synced. Generated 2026-11-16T08:42:03.491Z.
+Auto-generated detailed index of every docs/wiki/ concept — the map the LLM uses to locate information. 8 concept(s). Regenerated on init and on wiki_mark_synced. Generated 2026-11-16T08:51:10.688Z.
 
 Each entry: [title](concept-id.md) — description. Links are clickable in /wiki; pass the concept-id (link target minus .md) to wiki_get.
 
@@ -331,6 +377,19 @@ Each entry: [title](concept-id.md) — description. Links are clickable in /wiki
 ### Pages
 
 - [Page Templates](pages/TEMPLATES.md) — Reference templates for Concept, Entity, and Artifact pages. Follow these when using wiki_note_page.
+
+### Decisions
+
+- [Update propagation: okf_version-gated additive bundle migrations + prompt-in-package](decisions/update-propagation-okf-version-gated-additive-bundle-migrati.md) — Context
+
+### Rules
+
+- [Bundle migrations are additive-only, idempotent, and always ask-first](rules/bundle-migrations-are-additive-only-idempotent-and-always-as.md) — **Guideline**: Any new docs/wiki/ bundle surface or feature must ship as an **additive-only, idempotent migration step** keyed on a bump of the bundle's \`okf_ve
+
+### Learnings
+
+- [okf_version frontmatter is stamped at scaffold but never consumed](learnings/okf-version-frontmatter-is-stamped-at-scaffold-but-never-con.md) — \`indexFrontmatter()\` stamps \`okf_version: "0.1"\` into a bundle's root \`index.md\` at scaffold time (index.ts ~line 1232), but **nothing ever reads it** — there i
+- [/wiki:init on an existing bundle destroys authored content (only pages/ is guarded)](learnings/wiki-init-on-an-existing-bundle-destroys-authored-content-on.md) — \`initBundle()\` (index.ts, \`/wiki:init\` handler) unconditionally \`writeFile\`s \`index.md\`, \`overview.md\`, \`log.md\`, \`last_updated.md\`, \`glossary.md\`, and the \`pag
 <!-- wiki-nav:end -->
 
 An [OKF](https://github.com/earendil-works/okf) bundle documenting this project.
@@ -340,10 +399,67 @@ An [OKF](https://github.com/earendil-works/okf) bundle documenting this project.
 - [Glossary](./glossary.md) — Key terms for this project
 - [Pages](./pages/) — Concepts, entities, and artifacts of this project
 `,
+  "learnings/handover-roadmap-status-1-of-11-items-done-next-slice-is-r1-.md": `---
+type: Learning
+title: "Handover roadmap status: 1 of 11 items done — next slice is R1 + F1 + curator inlining"
+description: As of the "did we implement all improvements?" scorecard review, only **1 of 11** backlog items is done.
+tags: [roadmap, backlog, project-status, prioritization]
+timestamp: "2026-11-16T09:01:22.630Z"
+---
+
+# Handover roadmap status: 1 of 11 items done — next slice is R1 + F1 + curator inlining
+
+As of the "did we implement all improvements?" scorecard review, only **1 of 11** backlog items is done.
+
+**Implemented:**
+- Wiki bundle content (overview, glossary, file-tree descriptions)
+- Disconnect/reconnect (\`/wiki:disconnect\` + \`/wiki:reconnect\`, agent-home state keyed per cwd)
+
+**Not implemented — handover roadmap R1–R8:**
+- R1 inline the recap, kill the agentman dependency (top priority — the flagship end-of-turn recap silently no-ops without it)
+- R2 session journal / resume card
+- R3 ranked, token-budgeted injection
+- R4 git-aware targeted injection
+- R5 ranked \`wiki_search\` (still a substring scan)
+- R6 dedupe-at-write, lifecycle, governors
+- R7 \`/wiki:digest\`, \`/wiki:stats\`, bootstrap import, viewer search
+- R8 global memory tier
+
+**Also open from the architecture review:**
+- F1 \`/wiki:init\` data-loss bug — see [[wiki-init-on-an-existing-bundle-destroys-authored-content-on]]
+- F2 \`okf_version\` written but never read, so no migration path — see [[okf-version-frontmatter-is-stamped-at-scaffold-but-never-con]]
+- Update propagation mechanisms (extension update check, bundle migrations, curator prompt inlining) — decision recorded, not built
+- Tests: zero (only the type-check config with its 21-error peer-dep baseline)
+
+**Recommended next slice (proposed, awaiting user go-ahead):** R1 + F1 + curator prompt inlining — they share machinery, and F1 is a genuine data-loss bug sitting in the code today.
+
+This is point-in-time; update or delete once items land.
+`,
   "learnings/index.md": `# Learnings
 
 - [okf_version frontmatter is stamped at scaffold but never consumed](./okf-version-frontmatter-is-stamped-at-scaffold-but-never-con.md) - \`indexFrontmatter()\` stamps \`okf_version: "0.1"\` into a bundle's root \`index.md\` at scaffold time (index.ts ~line 1232), but **nothing ever reads it** — there i
 - [/wiki:init on an existing bundle destroys authored content (only pages/ is guarded)](./wiki-init-on-an-existing-bundle-destroys-authored-content-on.md) - \`initBundle()\` (index.ts, \`/wiki:init\` handler) unconditionally \`writeFile\`s \`index.md\`, \`overview.md\`, \`log.md\`, \`last_updated.md\`, \`glossary.md\`, and the \`pag
+- [Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff](./type-check-baseline-is-21-pre-existing-peer-dep-errors-verif.md) - \`npx tsc -p ../tsconfig.wikicheck.json\` currently reports **21 pre-existing errors**, all peer-dependency type drift (e.g. \`AgentToolResult.details\`, \`ctx.mode\`
+- [New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p](./new-pi-extension-commands-need-a-fresh-session-or-reload-tes.md) - Two gotchas when developing this pi extension (referenced as the "house gotcha" but never written down until now):
+- [Handover roadmap status: 1 of 11 items done — next slice is R1 + F1 + curator inlining](./handover-roadmap-status-1-of-11-items-done-next-slice-is-r1-.md) - As of the "did we implement all improvements?" scorecard review, only **1 of 11** backlog items is done.
+`,
+  "learnings/new-pi-extension-commands-need-a-fresh-session-or-reload-tes.md": `---
+type: Learning
+title: New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p
+description: "Two gotchas when developing this pi extension (referenced as the "house gotcha" but never written down until now):"
+tags: [testing, tui, pi -p, session-lifecycle, gotcha]
+timestamp: "2026-11-16T08:53:06.185Z"
+---
+
+# New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p
+
+Two gotchas when developing this pi extension (referenced as the "house gotcha" but never written down until now):
+
+1. **New extension code only appears in sessions started after the change.** pi loads extensions at session start, so a command added mid-session (e.g. a new \`/wiki:disconnect\`) does not exist in the current session. Verify it with \`/reload\` or a fresh session.
+
+2. **Test extension commands in the TUI, not via \`pi -p\` from Git Bash.** Slash commands and session-start machinery (injection, staleness footer, recap) only exercise correctly in an interactive TUI session.
+
+Observed 2026-11-16 while adding \`/wiki:disconnect\` / \`/wiki:reconnect\` — new commands were invisible to the session that implemented them.
 `,
   "learnings/okf-version-frontmatter-is-stamped-at-scaffold-but-never-con.md": `---
 type: Learning
@@ -362,6 +478,22 @@ This unused field is the natural hook for bundle update propagation: the extensi
 ## Source
 
 - \`index.ts\` — \`indexFrontmatter()\` (~line 1232): sole writer of \`okf_version\`; no consumer anywhere
+`,
+  "learnings/type-check-baseline-is-21-pre-existing-peer-dep-errors-verif.md": `---
+type: Learning
+title: Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff
+description: \`npx tsc -p ../tsconfig.wikicheck.json\` currently reports **21 pre-existing errors**, all peer-dependency type drift (e.g. \`AgentToolResult.details\`, \`ctx.mode\`
+tags: [type-check, tsc, verification, peer-dependencies]
+timestamp: "2026-11-16T08:52:59.090Z"
+---
+
+# Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff
+
+\`npx tsc -p ../tsconfig.wikicheck.json\` currently reports **21 pre-existing errors**, all peer-dependency type drift (e.g. \`AgentToolResult.details\`, \`ctx.mode\` typing) — not bugs in this package.
+
+**Gotcha:** a clean type-check is not the success bar here. The verification method is: run tsc **before** the change, run it **after**, and require identical error counts and identical error codes. Any new code or code is a regression; matching counts with the same codes is a pass.
+
+Observed 2026-11-16 while adding disconnect/reconnect: 21 errors before, 21 after, identical codes.
 `,
   "learnings/wiki-init-on-an-existing-bundle-destroys-authored-content-on.md": `---
 type: Learning
@@ -391,10 +523,11 @@ okf_version: "0.1"
 Auto-generated digest of the most recent conventions, decisions, rules and
 development patterns, plus architecture and global patterns — newest first.
 The actual files live in the wiki subfolders; follow the links (clickable in /wiki).
-Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T08:48:51.988Z.
+Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T09:01:22.634Z.
 
 ## Recent Decisions
 
+- [Disconnect/reconnect state lives in agent home, keyed per cwd](decisions/disconnect-reconnect-state-lives-in-agent-home-keyed-per-cwd.md) — Context (2026-11-16)
 - [Update propagation: okf_version-gated additive bundle migrations + prompt-in-package](decisions/update-propagation-okf-version-gated-additive-bundle-migrati.md) — Context (2026-11-16)
 
 ## Active Rules
@@ -403,6 +536,9 @@ Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T08
 
 ## Recent Learnings — development patterns
 
+- [Handover roadmap status: 1 of 11 items done — next slice is R1 + F1 + curator inlining](learnings/handover-roadmap-status-1-of-11-items-done-next-slice-is-r1-.md) — As of the "did we implement all improvements?" scorecard review, only **1 of 11** backlog items is done. (2026-11-16)
+- [New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p](learnings/new-pi-extension-commands-need-a-fresh-session-or-reload-tes.md) — Two gotchas when developing this pi extension (referenced as the "house gotcha" but never written down until now): (2026-11-16)
+- [Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff](learnings/type-check-baseline-is-21-pre-existing-peer-dep-errors-verif.md) — \`npx tsc -p ../tsconfig.wikicheck.json\` currently reports **21 pre-existing errors**, all peer-dependency type drift (e.g. \`AgentToolResult.… (2026-11-16)
 - [/wiki:init on an existing bundle destroys authored content (only pages/ is guarded)](learnings/wiki-init-on-an-existing-bundle-destroys-authored-content-on.md) — \`initBundle()\` (index.ts, \`/wiki:init\` handler) unconditionally \`writeFile\`s \`index.md\`, \`overview.md\`, \`log.md\`, \`last_updated.md\`, \`glossa… (2026-11-16)
 - [okf_version frontmatter is stamped at scaffold but never consumed](learnings/okf-version-frontmatter-is-stamped-at-scaffold-but-never-con.md) — \`indexFrontmatter()\` stamps \`okf_version: "0.1"\` into a bundle's root \`index.md\` at scaffold time (index.ts ~line 1232), but **nothing ever … (2026-11-16)
 
@@ -447,12 +583,15 @@ bundle (state in \`~/.pi/agent/.wiki-disconnected.json\`). \`viewer.ts\` is a
 standalone module that generates a self-contained HTML viewer for the whole
 bundle (\`wiki-viewer.html\` / \`wiki.js\` data) and serves it on localhost.
 
-Supporting assets ship alongside the code: \`agents/\` holds the prompts for two
-companion sub-agents (\`wiki-recap\` — an end-of-turn background agent that mines
-each turn for decisions, rules, and learnings; \`wiki-curator\` — syncs wiki
-concepts to code changes), meant to be copied to \`~/.pi/agent/agents/\` and run
-via the separate \`agentman\` package. \`skills/wikiman/SKILL.md\` teaches the LLM
-the wiki-first lookup order and the recording taxonomy.
+Supporting assets ship alongside the code: the end-of-turn **recap is
+self-contained** — one in-process completion call (hamster-pattern
+\`modelRegistry.complete\`, JSON-out → deterministic writes through the same
+\`noteInto\`/\`notePage\` funnel the \`wiki_note_*\` tools use, retry-on-unparseable,
+silent degradation without model/auth). \`agents/\` keeps the optional
+\`wiki-curator\` prompt (used by \`/wiki:update\` and the staleness prompt; without
+agentman or the copied prompt, the session LLM performs the sync itself), and
+\`agents/wiki-recap.md\` remains as a legacy copy. \`skills/wikiman/SKILL.md\`
+teaches the LLM the wiki-first lookup order and the recording taxonomy.
 
 Finally, the extension dogfoods its own product: \`docs/wiki/\` here is the
 project's own OKF bundle (scaffolded 2026-11-16 with index, overview,
@@ -588,10 +727,14 @@ var WIKI_PAGES = [
     { path: "overview.md", label: "Overview", group: "" },
     { path: "architecture/file-tree.md", label: "File tree", group: "Architecture" },
     { path: "decisions/index.md", label: "Decisions", group: "Decisions" },
+    { path: "decisions/disconnect-reconnect-state-lives-in-agent-home-keyed-per-cwd.md", label: "Disconnect/reconnect state lives in agent home, keyed per cwd", group: "Decisions" },
     { path: "decisions/update-propagation-okf-version-gated-additive-bundle-migrati.md", label: "Update propagation: okf_version-gated additive bundle migrations + prompt-in-package", group: "Decisions" },
     { path: "learnings/wiki-init-on-an-existing-bundle-destroys-authored-content-on.md", label: "/wiki:init on an existing bundle destroys authored content (only pages/ is guarded)", group: "Learnings" },
+    { path: "learnings/handover-roadmap-status-1-of-11-items-done-next-slice-is-r1-.md", label: "Handover roadmap status: 1 of 11 items done — next slice is R1 + F1 + curator inlining", group: "Learnings" },
     { path: "learnings/index.md", label: "Learnings", group: "Learnings" },
+    { path: "learnings/new-pi-extension-commands-need-a-fresh-session-or-reload-tes.md", label: "New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p", group: "Learnings" },
     { path: "learnings/okf-version-frontmatter-is-stamped-at-scaffold-but-never-con.md", label: "okf_version frontmatter is stamped at scaffold but never consumed", group: "Learnings" },
+    { path: "learnings/type-check-baseline-is-21-pre-existing-peer-dep-errors-verif.md", label: "Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff", group: "Learnings" },
     { path: "pages/TEMPLATES.md", label: "Page Templates", group: "Pages" },
     { path: "pages/index.md", label: "Pages", group: "Pages" },
     { path: "pages/artifacts/index.md", label: "Artifacts", group: "Pages / Artifacts" },

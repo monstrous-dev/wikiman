@@ -33,12 +33,15 @@ bundle (state in `~/.pi/agent/.wiki-disconnected.json`). `viewer.ts` is a
 standalone module that generates a self-contained HTML viewer for the whole
 bundle (`wiki-viewer.html` / `wiki.js` data) and serves it on localhost.
 
-Supporting assets ship alongside the code: `agents/` holds the prompts for two
-companion sub-agents (`wiki-recap` — an end-of-turn background agent that mines
-each turn for decisions, rules, and learnings; `wiki-curator` — syncs wiki
-concepts to code changes), meant to be copied to `~/.pi/agent/agents/` and run
-via the separate `agentman` package. `skills/wikiman/SKILL.md` teaches the LLM
-the wiki-first lookup order and the recording taxonomy.
+Supporting assets ship alongside the code: the end-of-turn **recap is
+self-contained** — one in-process completion call (hamster-pattern
+`modelRegistry.complete`, JSON-out → deterministic writes through the same
+`noteInto`/`notePage` funnel the `wiki_note_*` tools use, retry-on-unparseable,
+silent degradation without model/auth). `agents/` keeps the optional
+`wiki-curator` prompt (used by `/wiki:update` and the staleness prompt; without
+agentman or the copied prompt, the session LLM performs the sync itself), and
+`agents/wiki-recap.md` remains as a legacy copy. `skills/wikiman/SKILL.md`
+teaches the LLM the wiki-first lookup order and the recording taxonomy.
 
 Finally, the extension dogfoods its own product: `docs/wiki/` here is the
 project's own OKF bundle (scaffolded 2026-11-16 with index, overview,

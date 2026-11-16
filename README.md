@@ -18,9 +18,10 @@ pi install git:github.com/monstrous-dev/wikiman
   `wiki_discover` for lookup; `wiki_note_learning` / `_rule` / `_decision` /
   `_preference` / `_page` for structured recording; `wiki_validate`,
   `wiki_timestamp`, `wiki_changelog`, `wiki_mark_synced` for hygiene.
-- **End-of-turn recap** (optional) — a background subagent mines each turn for
-  major decisions, reusable rules, learnings, and new concepts, and records
-  them itself. See "Optional: the recap subagent" below.
+- **End-of-turn recap** — built in, no extra setup: a background completion
+  call mines each turn for major decisions, reusable rules, learnings, and new
+  concepts, and records them itself. Degrades silently when no model is
+  configured; the manual tools are never blocked.
 - **Staleness awareness** — the extension tracks when the wiki last changed
   alongside the code and nudges (ask-first, never automatic) when it drifts.
 - **Disconnect without deleting** — `/wiki:disconnect` pauses the extension for
@@ -74,17 +75,21 @@ project (`docs/wiki/`) and small marker files (`.wiki-omitted.json`,
 `.wiki-asked.json`) — nothing is sent anywhere.
 
 Inside git worktrees the extension stays dormant, and wiki initialization
-always asks first.
+always asks first. `/wiki:init` on an existing bundle only adds missing
+scaffold files — authored content is never overwritten.
 
-## Optional: the recap subagent
+## Optional: the curator subagent
 
-The richest feature — automatic end-of-turn wiki updates — needs two things
-that are machine-local by nature:
+The recap is fully self-contained. The **wiki-curator** (the agent behind
+`/wiki:update` and the session-start staleness prompt) also works without any
+extra setup — it falls back to an in-session update — but runs richest with:
 
-1. The `wiki-recap` / `wiki-curator` agent prompts — copies ship in
-   [`agents/`](agents/) of this repo. Copy them to `~/.pi/agent/agents/`.
+1. The `wiki-curator` agent prompt — a copy ships in
+   [`agents/`](agents/) of this repo. Copy it to `~/.pi/agent/agents/`.
 2. The sub-agent runner — published separately as
    [`pi install git:github.com/monstrous-dev/agentman`](https://github.com/monstrous-dev/agentman).
+   Without it the update runs inside your session instead of a background
+   subagent.
 
 ## Security
 
