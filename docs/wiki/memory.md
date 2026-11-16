@@ -8,10 +8,11 @@ okf_version: "0.1"
 Auto-generated digest of the most recent conventions, decisions, rules and
 development patterns, plus architecture and global patterns — newest first.
 The actual files live in the wiki subfolders; follow the links (clickable in /wiki).
-Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T10:03:12.695Z.
+Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T10:24:49.348Z.
 
 ## Recent Decisions
 
+- [R3 nav injection replaces grep-first exploration](decisions/r3-nav-injection-replaces-grep-first-exploration.md) — `buildInjection` now emits a ranked nav slice under a budget plus a hard imperative operating contract: consult the wiki map first, grep onl… (2026-11-16)
 - [Acceptance bar redefined: OKF wiki as a native LLM skill, 9/10 rubric on real transcripts](decisions/acceptance-bar-redefined-okf-wiki-as-a-native-llm-skill-9-10.md) — Context (2026-11-16)
 - [Gauntlet acceptance bar: 9/10 LLM memory with self-learning, verified e2e](decisions/gauntlet-acceptance-bar-9-10-llm-memory-with-self-learning-v.md) — Context (2026-11-16)
 - [Wiki:init is ensure-semantics — never overwrites authored content](decisions/wiki-init-is-ensure-semantics-never-overwrites-authored-cont.md) — Context (2026-11-16)
@@ -21,11 +22,14 @@ Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T10
 
 ## Active Rules
 
+- [Auto-generated files in docs/wiki/ must be validator-invisible](rules/auto-generated-files-in-docs-wiki-must-be-validator-invisibl.md) — Journal `.md` files without frontmatter tripped validator E1, and `wiki_mark_synced` refuses while errors exist — so agents burned tool call… (2026-11-16)
 - [Migration prompts: ask in UI, silent headless](rules/migration-prompts-ask-in-ui-silent-headless.md) — Bundle version migration prompts ask-first in the real UI but migrate silently in headless/RPC sessions, with per-cwd + per-version decline … (2026-11-16)
 - [Bundle migrations are additive-only, idempotent, and always ask-first](rules/bundle-migrations-are-additive-only-idempotent-and-always-as.md) — **Guideline**: Any new docs/wiki/ bundle surface or feature must ship as an **additive-only, idempotent migration step** keyed on a bump of … (2026-11-16)
 
 ## Recent Learnings — development patterns
 
+- [shell:true concatenates argv unquoted on Windows](learnings/shell-true-concatenates-argv-unquoted-on-windows.md) — With `shell: true`, args are joined raw, so a `-f` word inside a prompt string became a pi flag (instant exit 1). Prompts must carry their o… (2026-11-16)
+- [Debounce timer dies when pi -p exits (headless recap race)](learnings/debounce-timer-dies-when-pi-p-exits-headless-recap-race.md) — The journal/recap write used a 1.2s debounce timer, which is killed when `pi -p` exits — the journal silently never landed in headless mode.… (2026-11-16)
 - [regenerateMemory/updateIndexNavMap tolerate missing state](learnings/regeneratememory-updateindexnavmap-tolerate-missing-state.md) — `regenerateMemory` creates `memory.md` itself and `updateIndexNavMap` handles missing nav markers, so migrations can rely on them instead of… (2026-11-16)
 - [Migration writes shouldn't trip staleness nag](learnings/migration-writes-shouldn-t-trip-staleness-nag.md) — After migrating, bump the bundle's `last_updated` so the migration's own writes don't trigger the staleness nag on next session. (2026-11-16)
 - [Windows cmd.exe: use double quotes, not single](learnings/windows-cmd-exe-use-double-quotes-not-single.md) — cmd.exe does not honor single quotes — shell commands in the harness (e.g. git commit messages) must use double quotes on Windows. (2026-11-16)

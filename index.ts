@@ -302,6 +302,12 @@ async function notePage(
   const folder = folderMap[pageType];
   const dir = join(wikiDir(cwd), "pages", folder);
   await mkdir(dir, { recursive: true });
+  const dupe = await findExistingNote(cwd, dir, title);
+  if (dupe) {
+    return {
+      content: [{ type: "text", text: `Already recorded — ${dupe.id} ("${dupe.title}"). Nothing written (dedupe-at-write). Reference it as [[${dupe.title}]] or wiki_get("${dupe.id}") to review.` }],
+    };
+  }
   const slug = slugify(title);
   const now = new Date().toISOString();
   const firstLine = body.split(/\r?\n/).find((l) => l.trim())?.trim() || title;
@@ -356,6 +362,32 @@ async function notePage(
   };
 }
 
+function normalizeTitle(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/** R6 dedupe-at-write: same normalized title in the same folder → already
+ *  exists; return its id instead of writing a near-duplicate. */
+async function findExistingNote(cwd: string, dir: string, title: string): Promise<{ id: string; title: string } | null> {
+  if (!existsSync(dir)) return null;
+  const target = normalizeTitle(title);
+  if (!target) return null;
+  const root = wikiDir(cwd);
+  for (const f of await readdir(dir)) {
+    if (!f.endsWith(".md") || f === "index.md") continue;
+    try {
+      const { yaml } = parseFrontmatter(await readFile(join(dir, f), "utf8"));
+      const t = String(yaml.title ?? "");
+      if (t && normalizeTitle(t) === target) {
+        return { id: relative(root, join(dir, f)).replace(/\\/g, "/").replace(/\.md$/, ""), title: t };
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 /** Write a learning/preference concept + update its folder index. */
 async function noteInto(
   cwd: string,
@@ -369,6 +401,12 @@ async function noteInto(
   const refuse = worktreeWriteRefusal(); if (refuse) return refuse;
   const dir = join(wikiDir(cwd), folder);
   await mkdir(dir, { recursive: true });
+  const dupe = await findExistingNote(cwd, dir, title);
+  if (dupe) {
+    return {
+      content: [{ type: "text", text: `Already recorded — ${dupe.id} ("${dupe.title}"). Nothing written (dedupe-at-write). Reference it as [[${dupe.title}]] or wiki_get("${dupe.id}") to review.` }],
+    };
+  }
   const slug = slugify(title);
   const now = new Date().toISOString();
   // ponytail: strip markdown headings from auto-extracted description
@@ -476,6 +514,15 @@ export async function validateBundle(cwd: string): Promise<ValidationReport> {
     // W2: long, sentence-like filenames are hard to reference and truncate in the nav map.
     const stem = basename(f, ".md");
     if (stem.length > 50) warnings.push(`W2: ${rel} filename is ${stem.length} chars — shorten to a stable id`);
+    // W6: stale concept — untouched 90+ days. Warn only, never auto-delete (R6).
+    try {
+      const mtimeMs = (await stat(f)).mtimeMs;
+      if (Date.now() - mtimeMs > 90 * 86_400_000) {
+        warnings.push(`W6: ${rel} stale — untouched for 90+ days; refresh or supersede it`);
+      }
+    } catch {
+      /* stat failed — skip staleness check */
+    }
     // W4: cross-links whose target file doesn't exist (drift after deletion/rename).
     // Resolve each raw link target relative to the source file's dir, not the wiki root.
     const linkRe = /\[[^\]]+\]\(([^)]+)\)/g;
@@ -701,6 +748,16 @@ function collectTurnText(
   for (const raw of messages ?? []) {
     const msg = (raw as { message?: unknown })?.message ?? raw;
     const role = (msg as { role?: string })?.role;
+    // R6: surface wiki-note evidence so the recap does not re-record what the
+    // in-turn agent already captured (paraphrase duplicates observed in e2e).
+    if (role === "toolResult") {
+      const toolName = (msg as { toolName?: string })?.toolName ?? "";
+      if (toolName.startsWith("wiki_note_")) {
+        const t = messageText(msg);
+        out.push(`TOOL ${toolName}: ${t.slice(0, 200)}`);
+      }
+      continue;
+    }
     const t = messageText(msg);
     if (!t) continue;
     out.push(role === "user" ? `USER: ${t}` : `ASSISTANT: ${t}`);
@@ -738,6 +795,8 @@ Record ONLY (be selective — routine work warrants an EMPTY notes array):
 
 Return ONLY one JSON object — no prose, no markdown fences:
 {"notes":[{"type":"learning","title":"Short title","body":"markdown body, 1-3 short paragraphs","tags":["optional"]}],"journal":{"attempted":"what this turn set out to do (max 200 chars)","landed":"what actually changed or was learned (max 200 chars)","open":"what is unfinished or the next step, or empty"}}
+
+Your notes must be ADDITIONS the turn missed. If the transcript shows TOOL wiki_note_* calls that already recorded a fact, do NOT re-record it or a paraphrase of it — duplicating existing concepts is the worst thing you can do. The journal is still required.
 
 --- TURN ---
 ${turnText}
@@ -1219,6 +1278,53 @@ function capChars(s: string, max: number): string {
   return s.slice(0, max).trimEnd() + "\n…(truncated — use wiki_get for the full content)";
 }
 
+/** R4: recent files from git (last ~10 commits + working tree). Time-boxed,
+ *  bounded, silent on failure (non-repo → empty set → feature off). */
+function recentGitFiles(cwd: string, max = 60): Set<string> {
+  try {
+    const opts = { cwd, stdio: ["ignore", "pipe", "ignore"] as ("ignore" | "pipe")[], timeout: 250 };
+    const log = execSync("git log -10 --name-only --pretty=format:", opts).toString();
+    const status = execSync("git status --porcelain", opts).toString();
+    const files = new Set<string>();
+    for (const line of (log + "\n" + status).split(/\r?\n/)) {
+      const f = line.trim().replace(/^\s*[AMDR?]+\s+/, "").replace(/^"|"$/g, "");
+      if (!f || f.length > 200) continue;
+      files.add(f.replace(/\\/g, "/"));
+      if (files.size >= max) break;
+    }
+    return files;
+  } catch {
+    return new Set();
+  }
+}
+
+/** R4: concepts whose declared resource: matches the recent-file set. */
+async function resourceMatches(
+  cwd: string,
+  boostPaths: Set<string>,
+  limit: number,
+): Promise<Array<{ rel: string; title: string; desc: string }>> {
+  const root = wikiDir(cwd);
+  if (!existsSync(root)) return [];
+  const files = await walkMd(root);
+  const out: Array<{ rel: string; title: string; desc: string }> = [];
+  for (const f of files) {
+    const base = basename(f);
+    if (RESERVED.has(base)) continue;
+    const rel = relative(root, f).replace(/\\/g, "/").replace(/\.md$/, "");
+    try {
+      const { yaml } = parseFrontmatter(await readFile(f, "utf8"));
+      const res = resourcePath(yaml);
+      if (!res || !boostPaths.has(res.replace(/\\/g, "/"))) continue;
+      out.push({ rel, title: yaml.title ? String(yaml.title) : rel, desc: yaml.description ? String(yaml.description) : "" });
+      if (out.length >= limit) break;
+    } catch {
+      continue;
+    }
+  }
+  return out;
+}
+
 /** Ranked navigation slice: type weight × recency (+ boost for concepts whose
  *  resource: matches recent git activity, fed by R4). Deterministic. */
 async function rankedNavSlice(
@@ -1298,9 +1404,19 @@ Recording is otherwise automatic (end-of-turn recap) — you only call wiki_note
   const navSection = nav.lines.length ? navHeader(nav) + nav.lines.join("\n") : "";
   const journal = await latestJournal(cwd);
   const journalSection = journal ? `## Journal — last session (resume where it left off)\n\n${journal}` : "";
+  // R4: JIT relevance — concepts tied to files git says we're working near.
+  let relevanceBlock = "";
+  if (boostPaths && boostPaths.size > 0) {
+    const matches = await resourceMatches(cwd, boostPaths, 4);
+    if (matches.length) {
+      relevanceBlock = `## Relevant to your recent files\n\n` +
+        matches.map((m) => `- ${m.title}${m.desc ? ` — ${m.desc}` : ""}\n  wiki_get("${m.rel}")`).join("\n");
+    }
+  }
 
   const sections: string[] = [
     contract,
+    relevanceBlock,
     journalSection,
     navSection,
     `## overview.md\n\n${capChars(overview, OVERVIEW_MAX_CHARS)}`,
@@ -2096,7 +2212,7 @@ export default function (pi: ExtensionAPI) {
     if (!existsSync(wikiDir(ctx.cwd))) return;
     const sys = (event.systemPrompt ?? "");
     if (sys.includes(SENTINEL) || markerInBranch(ctx)) return; // already in context
-    const injection = await buildInjection(ctx.cwd);
+    const injection = await buildInjection(ctx.cwd, recentGitFiles(ctx.cwd));
     if (!injection) return;
     return {
       systemPrompt: sys + "\n\n" + injection,

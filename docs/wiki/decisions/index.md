@@ -6,3 +6,4 @@
 tes-authored-cont.md) - Context
 - [Gauntlet acceptance bar: 9/10 LLM memory with self-learning, verified e2e](./gauntlet-acceptance-bar-9-10-llm-memory-with-self-learning-v.md) - Context
 - [Acceptance bar redefined: OKF wiki as a native LLM skill, 9/10 rubric on real transcripts](./acceptance-bar-redefined-okf-wiki-as-a-native-llm-skill-9-10.md) - Context
+- [R3 nav injection replaces grep-first exploration](./r3-nav-injection-replaces-grep-first-exploration.md) - `buildInjection` now emits a ranked nav slice under a budget plus a hard imperative operating contract: consult the wiki map first, grep only as fallback when t
