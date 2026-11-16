@@ -20,3 +20,6 @@ _older below_
 
 ## 2026-11-16 (later)
 - **Feature**: Added /wiki:disconnect and /wiki:reconnect — pause the extension's proactive machinery (injection, staleness, recap, curator) per folder without deleting docs/wiki/. State: ~/.pi/agent/.wiki-disconnected.json.
+
+## 2026-11-16 (migration)
+- **Schema**: 0.1 → 0.2 — created journal/; regenerated memory.md; regenerated nav map.

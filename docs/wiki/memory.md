@@ -1,5 +1,5 @@
 ---
-okf_version: "0.1"
+okf_version: "0.2"
 ---
 
 <!-- wiki-memory:start -->
@@ -8,7 +8,7 @@ okf_version: "0.1"
 Auto-generated digest of the most recent conventions, decisions, rules and
 development patterns, plus architecture and global patterns — newest first.
 The actual files live in the wiki subfolders; follow the links (clickable in /wiki).
-Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T10:24:49.348Z.
+Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T10:37:38.025Z.
 
 ## Recent Decisions
 
@@ -22,12 +22,15 @@ Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T10
 
 ## Active Rules
 
+- [Exact-title duplicates rejected at the funnel level](rules/exact-title-duplicates-rejected-at-the-funnel-level.md) — `wiki_note_*` calls with an exact duplicate title return "Already recorded — id — reference as [[wikilink]]" instead of writing. Always refe… (2026-11-16)
 - [Auto-generated files in docs/wiki/ must be validator-invisible](rules/auto-generated-files-in-docs-wiki-must-be-validator-invisibl.md) — Journal `.md` files without frontmatter tripped validator E1, and `wiki_mark_synced` refuses while errors exist — so agents burned tool call… (2026-11-16)
 - [Migration prompts: ask in UI, silent headless](rules/migration-prompts-ask-in-ui-silent-headless.md) — Bundle version migration prompts ask-first in the real UI but migrate silently in headless/RPC sessions, with per-cwd + per-version decline … (2026-11-16)
 - [Bundle migrations are additive-only, idempotent, and always ask-first](rules/bundle-migrations-are-additive-only-idempotent-and-always-as.md) — **Guideline**: Any new docs/wiki/ bundle surface or feature must ship as an **additive-only, idempotent migration step** keyed on a bump of … (2026-11-16)
 
 ## Recent Learnings — development patterns
 
+- [JIT git-audit relevance pattern (R4) verified in practice](learnings/jit-git-audit-relevance-pattern-r4-verified-in-practice.md) — The agent performed a single git-audit call (log + status + last-commit stat), then read exactly the 3 recently-touched files and `wiki_get`… (2026-11-16)
+- [Recap dedupe gap: transcript must include wiki-tool evidence](learnings/recap-dedupe-gap-transcript-must-include-wiki-tool-evidence.md) — `collectTurnText` originally captured only user/assistant text, so the recap could not see that a `wiki_note_*` call had already fired in-tu… (2026-11-16)
 - [shell:true concatenates argv unquoted on Windows](learnings/shell-true-concatenates-argv-unquoted-on-windows.md) — With `shell: true`, args are joined raw, so a `-f` word inside a prompt string became a pi flag (instant exit 1). Prompts must carry their o… (2026-11-16)
 - [Debounce timer dies when pi -p exits (headless recap race)](learnings/debounce-timer-dies-when-pi-p-exits-headless-recap-race.md) — The journal/recap write used a 1.2s debounce timer, which is killed when `pi -p` exits — the journal silently never landed in headless mode.… (2026-11-16)
 - [regenerateMemory/updateIndexNavMap tolerate missing state](learnings/regeneratememory-updateindexnavmap-tolerate-missing-state.md) — `regenerateMemory` creates `memory.md` itself and `updateIndexNavMap` handles missing nav markers, so migrations can rely on them instead of… (2026-11-16)

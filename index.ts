@@ -1644,6 +1644,55 @@ a stable structure so pages are consistent, skimmable, and well-linked.
   await regenerateMemory(cwd);
 }
 
+// Ask-first update check: once per 24h, compare installed version against the
+// repo's latest git tag. Silent on failure/offline. Notify-only — never
+// auto-install (extensions load at session start; mid-session swaps are messy).
+const UPDATE_CHECK_FILE = join(homedir(), ".pi", "agent", ".wiki-update-check.json");
+const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
+
+function cmpSemver(a: string, b: string): number {
+  const p = (s: string) => s.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  const [pa, pb] = [p(a), p(b)];
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
+  }
+  return 0;
+}
+
+async function checkForUpdate(): Promise<{ current: string; latest: string } | null> {
+  try {
+    const current = String((JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version?: string }).version ?? "0.0.0");
+    let state: { at?: number; latest?: string } = {};
+    try {
+      state = JSON.parse(readFileSync(UPDATE_CHECK_FILE, "utf8"));
+    } catch {
+      /* first check */
+    }
+    if (state.at && Date.now() - state.at < UPDATE_CHECK_INTERVAL) {
+      return state.latest && cmpSemver(state.latest, current) > 0 ? { current, latest: state.latest } : null;
+    }
+    let latest = "";
+    try {
+      const out = execSync("git ls-remote --tags --refs https://github.com/monstrous-dev/wikiman", {
+        timeout: 3000,
+        stdio: ["ignore", "pipe", "ignore"] as ("ignore" | "pipe")[],
+      }).toString();
+      const tags = out.split(/\r?\n/).map((l) => l.split("refs/tags/")[1] ?? "").filter(Boolean);
+      latest = tags.sort(cmpSemver).at(-1) ?? "";
+    } catch {
+      latest = ""; // offline / not reachable — stay silent
+    }
+    try {
+      writeFileSync(UPDATE_CHECK_FILE, JSON.stringify({ at: Date.now(), latest }), "utf8");
+    } catch {
+      /* best-effort throttle persistence */
+    }
+    return latest && cmpSemver(latest, current) > 0 ? { current, latest } : null;
+  } catch {
+    return null;
+  }
+}
+
 function indexFrontmatter(): string {
   return `---\nokf_version: "${BUNDLE_VERSION}"\n---\n\n`;
 }
@@ -2194,6 +2243,18 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
+    // Ask-first update check (R8): once/24h, notify-only.
+    if (ctx.hasUI && ctx.mode !== "rpc") {
+      try {
+        const upd = await checkForUpdate();
+        if (upd) {
+          ctx.ui.notify(`wikiman ${upd.latest} is available (installed ${upd.current}) — run: pi update git:github.com/monstrous-dev/wikiman`, "info");
+        }
+      } catch {
+        /* never block startup */
+      }
+    }
+
     // Defer slightly so UI is ready and we don't block startup.
     try {
       await runStalenessCheck(ctx);
@@ -2330,44 +2391,66 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "wiki_search",
     label: "Wiki Search",
-    description: "Keyword search across all docs/wiki/ concepts. Returns a ranked list of path, description, and first matching line (top 15).",
+    description: "Keyword search across all docs/wiki/ concepts. Multi-term ranked search: term frequency × field weights (title > path/description > body) + recency + type boost. Returns ordered results (top 15).",
     promptSnippet: "Keyword search across docs/wiki/ concepts",
     parameters: Type.Object({
-      query: Type.String({ description: "Search query (case-insensitive substring)" }),
+      query: Type.String({ description: "Search query — one or more keywords" }),
     }),
     async execute(_id, params, signal, _onUpdate, ctx) {
       if (signal?.aborted) return { content: [{ type: "text", text: "Cancelled" }] };
       const cwd = ctx.cwd;
       const root = wikiDir(cwd);
-      const q = params.query.toLowerCase();
+      // R5: multi-term ranked search — TF × field weights (title 4 > path/desc 2
+      // > body 1) + recency boost + type boost. Zero network, zero model calls.
+      const terms = params.query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
       const files = await walkMd(root);
+      const now = Date.now();
       const hits: { rel: string; desc: string; line: string; score: number }[] = [];
       for (const f of files) {
         if (RESERVED.has(basename(f))) continue;
         const rel = relative(root, f).replace(/\.md$/, "").replace(/\\/g, "/");
         const text = await readFile(f, "utf8");
-        const { yaml } = parseFrontmatter(text);
-        const desc = (yaml.description ? String(yaml.description) : "").trim();
-        const lower = text.toLowerCase();
-        const inTitle = (yaml.title ? String(yaml.title).toLowerCase() : "").includes(q) ? 3 : 0;
-        const inPath = rel.toLowerCase().includes(q) ? 2 : 0;
-        const idx = lower.indexOf(q);
-        if (inTitle || inPath || idx >= 0) {
-          const line =
-            idx >= 0
-              ? text.slice(Math.max(0, idx - 40), idx + q.length + 40).replace(/\n/g, " ")
-              : "";
-          hits.push({ rel, desc, line, score: inTitle * 3 + inPath * 2 + (idx >= 0 ? 1 : 0) });
+        const { yaml, body } = parseFrontmatter(text);
+        const title = (yaml.title ? String(yaml.title) : "").toLowerCase();
+        const desc = (yaml.description ? String(yaml.description) : "").toLowerCase();
+        const bodyL = body.toLowerCase();
+        const pathL = rel.toLowerCase();
+        let score = 0;
+        let firstIdx = -1;
+        let matchedTerm = "";
+        for (const t of terms) {
+          const c = (s: string) => s.split(t).length - 1;
+          const s = c(title) * 4 + c(pathL) * 2 + c(desc) * 2 + c(bodyL);
+          if (s === 0) continue;
+          score += s;
+          if (firstIdx < 0) {
+            firstIdx = bodyL.indexOf(t);
+            matchedTerm = t;
+          }
         }
+        if (score === 0) continue;
+        try {
+          const ageDays = (now - (await stat(f)).mtimeMs) / 86_400_000;
+          if (ageDays < 7) score += 2; else if (ageDays < 30) score += 1;
+        } catch {
+          /* recency unknown */
+        }
+        const folder = rel.includes("/") ? rel.slice(0, rel.indexOf("/")) : "root";
+        score += TYPE_WEIGHT[folder] ?? 1;
+        const line = firstIdx >= 0
+          ? body.slice(Math.max(0, firstIdx - 40), firstIdx + matchedTerm.length + 40).replace(/\n/g, " ")
+          : "";
+        hits.push({ rel, desc: (yaml.description ? String(yaml.description) : "").trim(), line, score: Math.round(score * 10) / 10 });
       }
-      hits.sort((a, b) => b.score - a.score);
+      hits.sort((a, b) => b.score - a.score || a.rel.localeCompare(b.rel));
       const top = hits.slice(0, 15);
       if (top.length === 0)
         return { content: [{ type: "text" as const, text: `No concepts match "${params.query}".` }] };
-      const body = top
-        .map((h) => `- ${h.rel}${h.desc ? ` — ${h.desc}` : ""}${h.line ? `\n    …${h.line}…` : ""}`)
+      const body2 = top
+        .map((h) => `- ${h.rel} (score ${h.score})${h.desc ? ` — ${h.desc}` : ""}${h.line ? `\n    …${h.line}…` : ""}`)
         .join("\n");
-      return { content: [{ type: "text" as const, text: `${top.length} concept(s) match "${params.query}":\n\n${body}` }] };
+      return { content: [{ type: "text" as const, text: `${top.length} concept(s) match "${params.query}" (ranked):
+\n${body2}` }] };
     },
   });
 
@@ -3052,6 +3135,129 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("docs/wiki/ ready — missing scaffold files added, existing content kept.", "info");
       } catch (e) {
         ctx.ui.notify(`wiki:init failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+      }
+    },
+  });
+
+  // --- /wiki:stats — visibility drives trust (R7) ---
+  pi.registerCommand("wiki:stats", {
+    description: "Wiki stats: concept counts per folder, injection size vs budget, last sync, journal entries",
+    handler: async (_args, ctx) => {
+      ctx = staleSafeCtx(ctx);
+      if (!ctx.isProjectTrusted()) {
+        ctx.ui.notify("Project not trusted", "error");
+        return;
+      }
+      const wd = wikiDir(ctx.cwd);
+      if (!existsSync(wd)) {
+        ctx.ui.notify("No docs/wiki/ found. Run /wiki:init first.", "warning");
+        return;
+      }
+      try {
+        const counts: Record<string, number> = {};
+        for (const f of await walkMd(wd)) {
+          const rel = relative(wd, f).replace(/\\/g, "/");
+          if (RESERVED.has(basename(f))) continue;
+          const folder = rel.includes("/") ? rel.slice(0, rel.indexOf("/")) : "root";
+          counts[folder] = (counts[folder] ?? 0) + 1;
+        }
+        const injection = await buildInjection(ctx.cwd);
+        const chars = injection?.length ?? 0;
+        const sync = await readLastUpdated(ctx.cwd);
+        let journalEntries = 0;
+        const journalDir = join(wd, "journal");
+        if (existsSync(journalDir)) {
+          for (const f of await readdir(journalDir)) {
+            if (!f.endsWith(".md")) continue;
+            try {
+              journalEntries += (await readFile(join(journalDir, f), "utf8")).match(/^- /gm)?.length ?? 0;
+            } catch {
+              /* skip unreadable */
+            }
+          }
+        }
+        const countsLine = Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(", ") || "none";
+        ctx.ui.notify(
+          [
+            "wiki stats",
+            `  concepts: ${countsLine}`,
+            `  injection: ${chars}/${INJECTION_MAX_CHARS} chars (~${Math.ceil(chars / 4)} tokens)`,
+            `  last sync: ${sync ? new Date(sync).toISOString() : "never"}`,
+            `  journal entries: ${journalEntries}`,
+          ].join("\n"),
+          "info",
+        );
+      } catch (e) {
+        ctx.ui.notify(`wiki:stats failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+      }
+    },
+  });
+
+  // --- /wiki:digest — weekly roll-up (R7) ---
+  pi.registerCommand("wiki:digest", {
+    description: "Digest: last-7-days changelog entries + fresh learnings, written to docs/wiki/digest.md",
+    handler: async (_args, ctx) => {
+      ctx = staleSafeCtx(ctx);
+      if (!ctx.isProjectTrusted()) {
+        ctx.ui.notify("Project not trusted", "error");
+        return;
+      }
+      const wd = wikiDir(ctx.cwd);
+      if (!existsSync(wd)) {
+        ctx.ui.notify("No docs/wiki/ found. Run /wiki:init first.", "warning");
+        return;
+      }
+      try {
+        const cutoff = Date.now() - 7 * 86_400_000;
+        const chunks: string[] = [];
+        const clDir = join(wd, "changelog");
+        if (existsSync(clDir)) {
+          for (const f of (await readdir(clDir)).filter((x) => x.endsWith(".jsonl")).sort()) {
+            const raw = await readFile(join(clDir, f), "utf8");
+            for (const line of raw.split("\n")) {
+              if (!line.trim()) continue;
+              try {
+                const e = JSON.parse(line) as Record<string, unknown>;
+                const ts = Date.parse(String(e.at ?? e.timestamp ?? ""));
+                if (!Number.isNaN(ts) && ts >= cutoff) {
+                  chunks.push(`- **${String(e.category ?? "Changed")}**: ${String(e.user ?? e.what ?? "").slice(0, 160)}`);
+                }
+              } catch {
+                /* skip malformed line */
+              }
+            }
+          }
+        }
+        const learnDir = join(wd, "learnings");
+        const fresh: string[] = [];
+        if (existsSync(learnDir)) {
+          for (const f of await walkMd(learnDir)) {
+            if (basename(f) === "index.md") continue;
+            try {
+              if ((await stat(f)).mtimeMs < cutoff) continue;
+              const { yaml } = parseFrontmatter(await readFile(f, "utf8"));
+              fresh.push(`- ${String(yaml.title ?? basename(f, ".md"))}`);
+            } catch {
+              /* skip unreadable */
+            }
+          }
+        }
+        if (chunks.length === 0 && fresh.length === 0) {
+          ctx.ui.notify("Nothing new in the last 7 days — wiki is quiet.", "info");
+          return;
+        }
+        const now = new Date().toISOString();
+        const md = [
+          buildFrontmatter({ type: "Artifact", title: "Weekly digest", description: "Roll-up of the last 7 days of wiki activity.", timestamp: now }),
+          `# Weekly digest — ${now.slice(0, 10)}`,
+          "",
+          chunks.length ? `## Changelog (last 7 days)\n\n${chunks.join("\n")}` : "",
+          fresh.length ? `## Fresh learnings\n\n${fresh.slice(0, 15).join("\n")}` : "",
+        ].filter(Boolean).join("\n\n");
+        await writeFile(join(wd, "digest.md"), md + "\n", "utf8");
+        ctx.ui.notify(`Digest written: docs/wiki/digest.md (${chunks.length} changelog, ${fresh.length} fresh learnings).`, "info");
+      } catch (e) {
+        ctx.ui.notify(`wiki:digest failed: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
     },
   });
