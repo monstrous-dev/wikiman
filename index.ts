@@ -56,6 +56,9 @@ const LAST_UPDATED = "last_updated.md";
 // Folders where the user declined wiki init (asked once, never re-asked).
 // ponytail: flat array keyed by absolute path; per-project state file if this ever needs metadata.
 const OMITTED_FILE = join(homedir(), ".pi", "agent", ".wiki-omitted.json");
+// Folders where the user DISCONNECTED the wiki: extension machinery off
+// (injection, staleness, recap, /wiki:update), docs/wiki/ kept untouched.
+const DISCONNECTED_FILE = join(homedir(), ".pi", "agent", ".wiki-disconnected.json");
 const SENTINEL = "<!-- wiki-context:v1 -->";
 const FOOTER_KEY = "wiki";
 const RESOURCE_TRUNCATE = 200;
@@ -93,6 +96,34 @@ function saveOmitted(list: string[]): void {
   } catch {
     // best-effort: worst case we re-ask next session
   }
+}
+
+// --- Disconnected-folders registry (/wiki:disconnect ↔ /wiki:reconnect) ---
+// Same shape as the omitted registry: flat array of absolute cwds in agent
+// home, best-effort persistence. Disconnect is user-explicit (never set by
+// prompts), and unlike omission it does NOT delete or hide docs/wiki/ — the
+// bundle stays on disk, tools stay callable, the viewer stays openable; only
+// the proactive machinery (injection, staleness asks, recap, curator) pauses.
+
+function loadDisconnected(): string[] {
+  try {
+    const raw = JSON.parse(readFileSync(DISCONNECTED_FILE, "utf8"));
+    return Array.isArray(raw) ? raw.filter((x) => typeof x === "string") : [];
+  } catch {
+    return []; // missing or corrupt → treat as connected
+  }
+}
+
+function saveDisconnected(list: string[]): void {
+  try {
+    writeFileSync(DISCONNECTED_FILE, JSON.stringify(list, null, 2) + "\n", "utf8");
+  } catch {
+    // best-effort: worst case the wiki reconnects next session
+  }
+}
+
+function isDisconnected(cwd: string): boolean {
+  return loadDisconnected().includes(cwd);
 }
 
 // Per-cwd timestamps of the last staleness "update?" ask — 1h cooldown so a
@@ -1590,6 +1621,13 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
+    // Disconnected: no init offer, no staleness check — the bundle stays on
+    // disk and the /wiki viewer still works; only the proactive machinery is off.
+    if (isDisconnected(cwd)) {
+      ctx.ui.setStatus(FOOTER_KEY, "wiki: disconnected");
+      return;
+    }
+
     // Ask before first init; remember declines so we never re-ask (unless
     // /wiki:init is run explicitly). Headless can't ask → do nothing.
     if (!existsSync(wikiDir(cwd))) {
@@ -1629,6 +1667,7 @@ export default function (pi: ExtensionAPI) {
   // chained systemPrompt, or persisted in a prior session message (resume).
   pi.on("before_agent_start", async (event, ctx) => {
     if (!ctx.isProjectTrusted()) return;
+    if (isDisconnected(ctx.cwd)) return; // disconnected — no injection
     if (!existsSync(wikiDir(ctx.cwd))) return;
     const sys = (event.systemPrompt ?? "");
     if (sys.includes(SENTINEL) || markerInBranch(ctx)) return; // already in context
@@ -1660,6 +1699,8 @@ export default function (pi: ExtensionAPI) {
     if (!existsSync(wikiDir(ctx.cwd))) return;
     // Worktree: recap writes to the wiki — refuse (main checkout only).
     if (IS_WORKTREE) return;
+    // Disconnected: no end-of-turn auto-recap.
+    if (isDisconnected(ctx.cwd)) return;
     // Headless/print/JSON/RPC mode (incl. all delegated subagents) — never recap.
     // This is also the recursion guard: spawned children skip this path instead
     // of spawning recaps of their own. (hasUI is TRUE in RPC children — ui
@@ -2378,6 +2419,10 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("docs/wiki/ is read-only in a worktree — run /wiki:update from the main checkout.", "warning");
         return;
       }
+      if (isDisconnected(ctx.cwd)) {
+        ctx.ui.notify("Wiki is disconnected for this folder — /wiki:reconnect first.", "warning");
+        return;
+      }
       if (!existsSync(wikiDir(ctx.cwd))) {
         ctx.ui.notify("No docs/wiki/ found in this project. Run /wiki:init first.", "warning");
         return;
@@ -2419,6 +2464,10 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("docs/wiki/ is read-only in a worktree — run /wiki:init from the main checkout.", "warning");
         return;
       }
+      if (isDisconnected(ctx.cwd)) {
+        ctx.ui.notify("Wiki is disconnected for this folder — /wiki:reconnect before re-initializing.", "warning");
+        return;
+      }
       try {
         if (existsSync(wikiDir(ctx.cwd))) {
           const ok = ctx.hasUI ? await ctx.ui.confirm("Wiki exists", "docs/wiki/ already exists. Re-init (will not overwrite existing concept files)?") : false;
@@ -2431,6 +2480,54 @@ export default function (pi: ExtensionAPI) {
       } catch (e) {
         ctx.ui.notify(`wiki:init failed: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
+    },
+  });
+
+  // --- /wiki:disconnect — turn the extension OFF for this folder (bundle kept) ---
+  pi.registerCommand("wiki:disconnect", {
+    description: "Disconnect the wiki for this folder — stops context injection, staleness checks, and end-of-turn recap; docs/wiki/ is kept untouched",
+    handler: async (_args, ctx) => {
+      // ctx is used after awaits? No — but disconnect cancels a pending recap
+      // timer and touches the footer; guard stale ctx for uniformity.
+      ctx = staleSafeCtx(ctx);
+      if (!ctx.isProjectTrusted()) {
+        ctx.ui.notify("Project not trusted", "error");
+        return;
+      }
+      if (IS_WORKTREE) {
+        ctx.ui.notify("Wiki machinery is already read-only in a worktree — nothing to disconnect.", "warning");
+        return;
+      }
+      const list = loadDisconnected();
+      if (list.includes(ctx.cwd)) {
+        ctx.ui.notify("Wiki is already disconnected for this folder.", "info");
+        return;
+      }
+      list.push(ctx.cwd);
+      saveDisconnected(list);
+      clearRecapTimer(); // cancel any recap already scheduled for this turn
+      try { ctx.ui.setStatus(FOOTER_KEY, "wiki: disconnected"); } catch { /* stale */ }
+      ctx.ui.notify("Wiki disconnected. docs/wiki/ is untouched and wiki_get/search still work; /wiki:reconnect to re-enable.", "info");
+    },
+  });
+
+  // --- /wiki:reconnect — turn the extension back ON for this folder ---
+  pi.registerCommand("wiki:reconnect", {
+    description: "Reconnect the wiki for this folder — resumes context injection, staleness checks, and end-of-turn recap",
+    handler: async (_args, ctx) => {
+      ctx = staleSafeCtx(ctx);
+      if (!ctx.isProjectTrusted()) {
+        ctx.ui.notify("Project not trusted", "error");
+        return;
+      }
+      const list = loadDisconnected();
+      if (!list.includes(ctx.cwd)) {
+        ctx.ui.notify("Wiki is not disconnected for this folder.", "info");
+        return;
+      }
+      saveDisconnected(list.filter((d) => d !== ctx.cwd));
+      try { ctx.ui.setStatus(FOOTER_KEY, undefined); } catch { /* stale */ }
+      ctx.ui.notify("Wiki reconnected. Injection and recap resume; staleness re-checks next session — or run /wiki:update now.", "info");
     },
   });
 }

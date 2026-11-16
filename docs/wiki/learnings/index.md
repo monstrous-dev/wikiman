@@ -1,0 +1,7 @@
+# Learnings
+
+- [okf_version frontmatter is stamped at scaffold but never consumed](./okf-version-frontmatter-is-stamped-at-scaffold-but-never-con.md) - `indexFrontmatter()` stamps `okf_version: "0.1"` into a bundle's root `index.md` at scaffold time (index.ts ~line 1232), but **nothing ever reads it** — there i
+- [/wiki:init on an existing bundle destroys authored content (only pages/ is guarded)](./wiki-init-on-an-existing-bundle-destroys-authored-content-on.md) - `initBundle()` (index.ts, `/wiki:init` handler) unconditionally `writeFile`s `index.md`, `overview.md`, `log.md`, `last_updated.md`, `glossary.md`, and the `pag
+- [Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff](./type-check-baseline-is-21-pre-existing-peer-dep-errors-verif.md) - `npx tsc -p ../tsconfig.wikicheck.json` currently reports **21 pre-existing errors**, all peer-dependency type drift (e.g. `AgentToolResult.details`, `ctx.mode`
+- [New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p](./new-pi-extension-commands-need-a-fresh-session-or-reload-tes.md) - Two gotchas when developing this pi extension (referenced as the "house gotcha" but never written down until now):
+- [Handover roadmap status: 1 of 11 items done — next slice is R1 + F1 + curator inlining](./handover-roadmap-status-1-of-11-items-done-next-slice-is-r1-.md) - As of the "did we implement all improvements?" scorecard review, only **1 of 11** backlog items is done.

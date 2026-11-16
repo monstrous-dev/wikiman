@@ -23,6 +23,9 @@ pi install git:github.com/monstrous-dev/wikiman
   them itself. See "Optional: the recap subagent" below.
 - **Staleness awareness** — the extension tracks when the wiki last changed
   alongside the code and nudges (ask-first, never automatic) when it drifts.
+- **Disconnect without deleting** — `/wiki:disconnect` pauses the extension for
+  a folder (no context injection, staleness checks, or recap) while keeping
+  `docs/wiki/` on disk untouched; `/wiki:reconnect` resumes.
 - **HTML viewer** — a self-contained `wiki-viewer.html` renders the whole
   bundle in a browser, kept fresh automatically.
 - **Ships a skill** — installs a `wikiman` skill so the LLM knows the lookup
