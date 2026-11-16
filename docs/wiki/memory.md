@@ -1,5 +1,5 @@
 ---
-okf_version: "0.1"
+okf_version: "0.2"
 ---
 
 <!-- wiki-memory:start -->
@@ -8,7 +8,7 @@ okf_version: "0.1"
 Auto-generated digest of the most recent conventions, decisions, rules and
 development patterns, plus architecture and global patterns — newest first.
 The actual files live in the wiki subfolders; follow the links (clickable in /wiki).
-Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T10:38:53.429Z.
+Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T12:03:47.903Z.
 
 ## Recent Decisions
 
@@ -22,6 +22,7 @@ Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T10
 
 ## Active Rules
 
+- [Match the task, not the recency (contract rule 5)](rules/match-the-task-not-the-recency-contract-rule-5.md) — Probe agents should open exactly the concepts named by the task, not chase recently-viewed files. Enforcing this halved session durations (S… (2026-11-16)
 - [Exact-title duplicates rejected at the funnel level](rules/exact-title-duplicates-rejected-at-the-funnel-level.md) — `wiki_note_*` calls with an exact duplicate title return "Already recorded — id — reference as [[wikilink]]" instead of writing. Always refe… (2026-11-16)
 - [Auto-generated files in docs/wiki/ must be validator-invisible](rules/auto-generated-files-in-docs-wiki-must-be-validator-invisibl.md) — Journal `.md` files without frontmatter tripped validator E1, and `wiki_mark_synced` refuses while errors exist — so agents burned tool call… (2026-11-16)
 - [Migration prompts: ask in UI, silent headless](rules/migration-prompts-ask-in-ui-silent-headless.md) — Bundle version migration prompts ask-first in the real UI but migrate silently in headless/RPC sessions, with per-cwd + per-version decline … (2026-11-16)
@@ -29,6 +30,10 @@ Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T10
 
 ## Recent Learnings — development patterns
 
+- [Launching pi TUI QA windows on Windows](learnings/launching-pi-tui-qa-windows-on-windows.md) — To get a visible pi TUI session for QA on Windows, launch via `wt -w new` — a plain `Start-Process` of a `.cmd` lands in a hidden conhost. W… (2026-11-16)
+- [TUI-only surfaces untested by headless e2e](learnings/tui-only-surfaces-untested-by-headless-e2e.md) — wikiman's e2e probes run headless (`pi -p`), which silently skips all UI-facing paths: confirm dialogs (staleness, migration, re-init scaffo… (2026-11-16)
+- [Fixture DLQ is genuinely unwired; ground truth must bless code-truthful readings](learnings/fixture-dlq-is-genuinely-unwired-ground-truth-must-bless-cod.md) — The planted DLQ trap in the e2e fixture has no producer — the S6 agent's 'contrarian' claim that it was unwired was code-accurate. The groun… (2026-11-16)
+- [Probe tool logs accumulate across sessions without per-run clearing](learnings/probe-tool-logs-accumulate-across-sessions-without-per-run-c.md) — In the wikiman-e2e gauntlet, round-1 `.tools.log` files accumulated across probe sessions, so blind critics grading S2/S3/S6 were partially … (2026-11-16)
 - [/wiki:stats output is TUI-only by design](learnings/wiki-stats-output-is-tui-only-by-design.md) — `/wiki:stats` prints nothing when run headless (exit 0, silent) because its output goes through `ui.notify`, which is UI-facing. Headless ve… (2026-11-16)
 - [Slash commands work headless via cmd.exe](learnings/slash-commands-work-headless-via-cmd-exe.md) — The "slash commands crash headless" gotcha is actually Git Bash / MSYS-specific path mangling, not a pi limitation. Running from cmd.exe — `… (2026-11-16)
 - [JIT git-audit relevance pattern (R4) verified in practice](learnings/jit-git-audit-relevance-pattern-r4-verified-in-practice.md) — The agent performed a single git-audit call (log + status + last-commit stat), then read exactly the 3 recently-touched files and `wiki_get`… (2026-11-16)
@@ -45,7 +50,6 @@ Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T10
 - [Handover roadmap: R1 + F1 + curator slice done (ec1034a) — next is R2 journal](learnings/handover-roadmap-r1-f1-curator-slice-done-ec1034a-next-is-r2.md) — The **R1 + F1 + curator-inlining slice is done** — commit `ec1034a` (2026-11-16), (2026-11-16)
 - [New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p](learnings/new-pi-extension-commands-need-a-fresh-session-or-reload-tes.md) — Two gotchas when developing this pi extension (referenced as the "house gotcha" but never written down until now): (2026-11-16)
 - [Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff](learnings/type-check-baseline-is-21-pre-existing-peer-dep-errors-verif.md) — `npx tsc -p ../tsconfig.wikicheck.json` currently reports **21 pre-existing errors**, all peer-dependency type drift (e.g. `AgentToolResult.… (2026-11-16)
-- [okf_version frontmatter is stamped at scaffold but never consumed](learnings/okf-version-frontmatter-is-stamped-at-scaffold-but-never-con.md) — `indexFrontmatter()` stamps `okf_version: "0.1"` into a bundle's root `index.md` at scaffold time (index.ts ~line 1232), but **nothing ever … (2026-11-16)
 
 ## Architecture
 
