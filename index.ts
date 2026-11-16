@@ -1455,8 +1455,9 @@ This project keeps an OKF knowledge wiki at docs/wiki/. It is the authoritative 
 2. OPEN: call wiki_get("<concept-id>") on it BEFORE reading any source file — concept bodies name exact paths and the reasoning behind them.
 3. GREP IS LAST RESORT: never run grep/find/rg/ls before steps 1-2. Searching the filesystem before consulting the map is a failure, not a shortcut.
 4. LAZY-LOAD: read concept bodies one at a time via wiki_get. Never read the whole bundle. Never bulk-list docs/wiki/.
-5. PROGRESSIVE DISCLOSURE: orient from the overview + map; open a concept body only when the task needs that depth; quote sparingly.
-6. CLOSE THE LOOP: if the map lacks the area, wiki_discover it, then wiki_note_page what you learned — the next session starts smarter. Call wiki_mark_synced() after wiki edits.
+5. MATCH THE TASK, NOT THE RECENCY: scan concept TITLES in the map and open only what this specific task needs — the newest entries are not a reading list.
+6. PROGRESSIVE DISCLOSURE: orient from the overview + map; open a concept body only when the task needs that depth; quote sparingly.
+7. CLOSE THE LOOP: if the map lacks the area, wiki_discover it, then wiki_note_page what you learned — the next session starts smarter. Call wiki_mark_synced() after wiki edits.
 
 Recording is otherwise automatic (end-of-turn recap) — you only call wiki_note_* when something is urgent or explicit.`;
 
