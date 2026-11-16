@@ -2312,7 +2312,7 @@ export default function (pi: ExtensionAPI) {
       try {
         const upd = await checkForUpdate();
         if (upd) {
-          ctx.ui.notify(`wikiman ${upd.latest} is available (installed ${upd.current}) — run: pi update git:github.com/monstrous-dev/wikiman`, "info");
+          ctx.ui.notify(`wikiman ${upd.latest} is available (installed ${upd.current}) — run /wiki:self-update, or: pi update git:github.com/monstrous-dev/wikiman`, "info");
         }
       } catch {
         /* never block startup */
@@ -3334,6 +3334,47 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Digest written: docs/wiki/digest.md (${chunks.length} changelog, ${fresh.length} fresh learnings).`, "info");
       } catch (e) {
         ctx.ui.notify(`wiki:digest failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+      }
+    },
+  });
+
+  // --- /wiki:self-update — update the extension itself (R8 companion) ---
+  pi.registerCommand("wiki:self-update", {
+    description: "Update the wikiman extension to the latest published version (runs pi update; then /reload or restart pi to load it)",
+    handler: async (_args, ctx) => {
+      ctx = staleSafeCtx(ctx);
+      if (!ctx.isProjectTrusted()) {
+        ctx.ui.notify("Project not trusted", "error");
+        return;
+      }
+      if (!ctx.hasUI) {
+        ctx.ui.notify("/wiki:self-update needs the TUI (it asks first). Run: pi update git:github.com/monstrous-dev/wikiman", "warning");
+        return;
+      }
+      const ok = await ctx.ui.confirm(
+        "Update wikiman",
+        "Run 'pi update git:github.com/monstrous-dev/wikiman' now?\n\nSafe: pi keeps running the old code until you /reload or restart — nothing breaks mid-session.",
+      );
+      if (!ok) return;
+      try {
+        ctx.ui.setStatus(FOOTER_KEY, "wiki: updating extension...");
+        const out = execSync("pi update git:github.com/monstrous-dev/wikiman", {
+          timeout: 180_000,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        try {
+          writeFileSync(UPDATE_CHECK_FILE, JSON.stringify({ at: Date.now(), latest: "" }), "utf8");
+        } catch {
+          /* throttle state is best-effort */
+        }
+        ctx.ui.setStatus(FOOTER_KEY, undefined);
+        const tail = out.trim() ? "\n  " + out.trim().split(/\r?\n/).slice(-3).join("\n  ") : "";
+        ctx.ui.notify(`wikiman updated.${tail}\nRun /reload or restart pi to load the new version.`, "info");
+      } catch (e) {
+        ctx.ui.setStatus(FOOTER_KEY, undefined);
+        const msg = e instanceof Error ? e.message : String(e);
+        ctx.ui.notify(`Self-update failed: ${msg.slice(0, 200)}\nTry manually: pi update git:github.com/monstrous-dev/wikiman`, "error");
       }
     },
   });

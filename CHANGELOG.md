@@ -3,6 +3,13 @@
 All notable changes to wikiman. Releases are git tags; pin one with
 `pi install git:github.com/monstrous-dev/wikiman@vX.Y.Z`.
 
+## Unreleased
+
+- **`/wiki:self-update`** — update the extension itself from inside pi:
+  ask-first, runs `pi update git:github.com/monstrous-dev/wikiman`, then
+  reminds you to `/reload`. The update-available notification now points at
+  it too.
+
 ## v0.2.0 — the self-contained release
 
 The big one: wikiman no longer needs anything else installed to be amazing.

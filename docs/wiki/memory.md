@@ -8,7 +8,7 @@ okf_version: "0.2"
 Auto-generated digest of the most recent conventions, decisions, rules and
 development patterns, plus architecture and global patterns — newest first.
 The actual files live in the wiki subfolders; follow the links (clickable in /wiki).
-Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T12:03:47.903Z.
+Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T12:29:12.456Z.
 
 ## Recent Decisions
 
@@ -30,6 +30,7 @@ Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T12
 
 ## Recent Learnings — development patterns
 
+- [Wiki sync triggers: command vs staleness check vs version flows](learnings/wiki-sync-triggers-command-vs-staleness-check-vs-version-flo.md) — Three independent wiki triggers exist: `/wiki:update` (on-demand full sync), a session-start staleness check keyed to *code* changes vs `doc… (2026-11-16)
 - [Launching pi TUI QA windows on Windows](learnings/launching-pi-tui-qa-windows-on-windows.md) — To get a visible pi TUI session for QA on Windows, launch via `wt -w new` — a plain `Start-Process` of a `.cmd` lands in a hidden conhost. W… (2026-11-16)
 - [TUI-only surfaces untested by headless e2e](learnings/tui-only-surfaces-untested-by-headless-e2e.md) — wikiman's e2e probes run headless (`pi -p`), which silently skips all UI-facing paths: confirm dialogs (staleness, migration, re-init scaffo… (2026-11-16)
 - [Fixture DLQ is genuinely unwired; ground truth must bless code-truthful readings](learnings/fixture-dlq-is-genuinely-unwired-ground-truth-must-bless-cod.md) — The planted DLQ trap in the e2e fixture has no producer — the S6 agent's 'contrarian' claim that it was unwired was code-accurate. The groun… (2026-11-16)
@@ -49,7 +50,6 @@ Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T12
 - [/wiki:init re-init data loss (F1) — FIXED via ensure-semantics init](learnings/wiki-init-on-an-existing-bundle-destroys-authored-content-on.md) — initBundle() used to unconditionally overwrite authored overview/glossary/log/last_updated on re-init (only pages/ and .wiki_ignore were gua… (2026-11-16)
 - [Handover roadmap: R1 + F1 + curator slice done (ec1034a) — next is R2 journal](learnings/handover-roadmap-r1-f1-curator-slice-done-ec1034a-next-is-r2.md) — The **R1 + F1 + curator-inlining slice is done** — commit `ec1034a` (2026-11-16), (2026-11-16)
 - [New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p](learnings/new-pi-extension-commands-need-a-fresh-session-or-reload-tes.md) — Two gotchas when developing this pi extension (referenced as the "house gotcha" but never written down until now): (2026-11-16)
-- [Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff](learnings/type-check-baseline-is-21-pre-existing-peer-dep-errors-verif.md) — `npx tsc -p ../tsconfig.wikicheck.json` currently reports **21 pre-existing errors**, all peer-dependency type drift (e.g. `AgentToolResult.… (2026-11-16)
 
 ## Architecture
 
