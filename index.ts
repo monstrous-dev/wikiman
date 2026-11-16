@@ -210,12 +210,14 @@ function buildFrontmatter(yaml: Record<string, unknown>): string {
 async function readConcept(
   cwd: string,
   concept: string,
+  baseDir?: string,
 ): Promise<{ path: string; text: string } | null> {
   const stripped = concept.replace(/^@/, "").replace(/\.md$/, "");
+  const base = baseDir ?? wikiDir(cwd);
   const candidates = [
-    join(wikiDir(cwd), `${stripped}.md`),
-    join(wikiDir(cwd), stripped), // already .md or index
-    join(wikiDir(cwd), stripped, "index.md"),
+    join(base, `${stripped}.md`),
+    join(base, stripped), // already .md or index
+    join(base, stripped, "index.md"),
   ];
   for (const p of candidates) {
     if (existsSync(p) && (await stat(p).then((s) => s.isFile()).catch(() => false))) {
@@ -1273,6 +1275,60 @@ const TYPE_WEIGHT: Record<string, number> = {
   preferences: 2, glossary: 1, root: 1,
 };
 
+// R8: global memory tier — a strict slice of the agent-home wiki injected
+// below the project wiki in every project session. Advisory titles only;
+// bodies stay lazy-loadable via wiki_get("global/<id>").
+const AGENT_WIKI = join(homedir(), ".pi", "agent", "docs", "wiki");
+const GLOBAL_TIER_MAX_CHARS = 1_500;
+
+async function globalTierSlice(): Promise<string> {
+  const entries: { title: string; desc: string; rel: string; mtime: number }[] = [];
+  for (const d of ["rules", "preferences"]) {
+    const dir = join(AGENT_WIKI, d);
+    if (!existsSync(dir)) continue;
+    for (const f of await walkMd(dir)) {
+      if (basename(f) === "index.md") continue;
+      try {
+        const { yaml } = parseFrontmatter(await readFile(f, "utf8"));
+        entries.push({
+          title: String(yaml.title ?? basename(f, ".md")),
+          desc: String(yaml.description ?? ""),
+          rel: `${d}/${basename(f, ".md")}`,
+          mtime: (await stat(f)).mtimeMs,
+        });
+      } catch {
+        continue;
+      }
+    }
+  }
+  entries.sort((a, b) => b.mtime - a.mtime);
+  return entries
+    .slice(0, 8)
+    .map((e) => `- ${e.title}${e.desc ? ` — ${e.desc}` : ""} (wiki_get("global/${e.rel}"))`)
+    .join("\n");
+}
+
+/** R7 bootstrap import: docs/adr/*.md → Concept starter pages. One page per
+ *  ADR, wikilinkable, Source-linked. Deterministic; ask-first is the caller's
+ *  job (UI-only — headless sessions are never surprised). */
+async function importAdrs(cwd: string): Promise<number> {
+  const adrDir = join(cwd, "docs", "adr");
+  if (!existsSync(adrDir)) return 0;
+  let n = 0;
+  for (const f of (await readdir(adrDir)).filter((x) => x.endsWith(".md")).sort()) {
+    try {
+      const raw = await readFile(join(adrDir, f), "utf8");
+      const body = raw.replace(/^---[\s\S]*?---\s*/, "").replace(/^#\s+.*\r?\n/, "").trim();
+      const title = (raw.match(/^#\s+(.+)$/m)?.[1] ?? basename(f, ".md")).trim();
+      const r = await notePage(cwd, "Concept", title, `${body}\n\nSource: docs/adr/${f} — original decision record.`, ["adr"]);
+      if (!String(r.content[0]?.text ?? "").startsWith("Already recorded")) n++;
+    } catch {
+      continue;
+    }
+  }
+  return n;
+}
+
 function capChars(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max).trimEnd() + "\n…(truncated — use wiki_get for the full content)";
@@ -1381,6 +1437,12 @@ async function buildInjection(cwd: string, boostPaths?: Set<string>): Promise<st
   const overview = existsSync(overviewP) ? await readFile(overviewP, "utf8") : "(no overview.md)";
   const memoryP = join(wikiDir(cwd), MEMORY_FILE);
   const memory = existsSync(memoryP) ? await readFile(memoryP, "utf8") : "";
+  // R8: global tier below the project wiki. Cycle guard: when the session cwd
+  // IS the agent home, its wiki is already THE project wiki — never double-inject.
+  let globalSection = "";
+  if (resolve(wikiDir(cwd)).toLowerCase() !== resolve(AGENT_WIKI).toLowerCase()) {
+    globalSection = await globalTierSlice();
+  }
 
   // R3: the operating contract — short, imperative, position 0. Baseline
   // evidence: a polite, buried rule did not change tool choice; agents went
@@ -1421,6 +1483,7 @@ Recording is otherwise automatic (end-of-turn recap) — you only call wiki_note
     navSection,
     `## overview.md\n\n${capChars(overview, OVERVIEW_MAX_CHARS)}`,
     memory ? `## memory.md — the live contract (recent decisions, rules, conventions)\n\n${capChars(memory, MEMORY_MAX_CHARS)}` : "",
+    globalSection ? `## Global memory — agent-home rules & preferences (apply in every project)\n\n${capChars(globalSection, GLOBAL_TIER_MAX_CHARS)}` : "",
     `## Tools (lazy-load the wiki — do NOT read it wholesale)\nwiki_get("<id>") read one concept · wiki_search("kw") find concepts · wiki_related("<id>") follow links · wiki_discover explore filesystem · wiki_note_learning/rule/decision/preference/page record knowledge · wiki_mark_synced after wiki edits · wiki_validate check structure · wiki_changelog user-facing change entry · wiki_timestamp timestamps`,
     SENTINEL,
   ].filter(Boolean) as string[];
@@ -2361,13 +2424,16 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, params, signal, _onUpdate, ctx) {
       if (signal?.aborted) return { content: [{ type: "text", text: "Cancelled" }] };
       const cwd = ctx.cwd;
-      const found = await readConcept(cwd, params.concept);
+      // R8: ids prefixed "global/" read from the agent-home wiki instead of
+      // the project bundle — the global tier stays lazy-loadable.
+      const isGlobal = params.concept.startsWith("global/");
+      const found = await readConcept(cwd, isGlobal ? params.concept.slice("global/".length) : params.concept, isGlobal ? AGENT_WIKI : undefined);
       if (!found) {
         return {
           content: [{ type: "text" as const, text: `Not found: ${params.concept}. Call wiki_search to discover concepts.` }],
         };
       }
-      let out = `# ${relative(wikiDir(cwd), found.path).replace(/\\/g, "/")}\n\n${found.text}`;
+      let out = `# ${relative(isGlobal ? AGENT_WIKI : wikiDir(cwd), found.path).replace(/\\/g, "/")}\n\n${found.text}`;
       const { yaml } = parseFrontmatter(found.text);
       const res = resourcePath(yaml);
       if (res) {
@@ -3130,6 +3196,15 @@ export default function (pi: ExtensionAPI) {
         await initBundle(ctx.cwd);
         // Explicit init also upgrades a legacy bundle schema (F2).
         try { await migrateBundle(ctx.cwd); } catch { /* best effort */ }
+        // R7 bootstrap import: offer ADR → Concept pages (ask-first, UI only).
+        if (ctx.hasUI && ctx.mode !== "rpc") {
+          try {
+            const n = await importAdrs(ctx.cwd);
+            if (n > 0) ctx.ui.notify(`Bootstrapped ${n} ADR page(s) into docs/wiki/pages/concepts/.`, "info");
+          } catch {
+            /* best effort */
+          }
+        }
         // Explicit init overrides an earlier decline.
         saveOmitted(loadOmitted().filter((d) => d !== ctx.cwd));
         ctx.ui.notify("docs/wiki/ ready — missing scaffold files added, existing content kept.", "info");

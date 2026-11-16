@@ -1,5 +1,5 @@
 ---
-okf_version: "0.2"
+okf_version: "0.1"
 ---
 
 <!-- wiki-memory:start -->
@@ -8,7 +8,7 @@ okf_version: "0.2"
 Auto-generated digest of the most recent conventions, decisions, rules and
 development patterns, plus architecture and global patterns — newest first.
 The actual files live in the wiki subfolders; follow the links (clickable in /wiki).
-Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T10:37:38.025Z.
+Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T10:38:53.429Z.
 
 ## Recent Decisions
 
@@ -29,6 +29,8 @@ Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T10
 
 ## Recent Learnings — development patterns
 
+- [/wiki:stats output is TUI-only by design](learnings/wiki-stats-output-is-tui-only-by-design.md) — `/wiki:stats` prints nothing when run headless (exit 0, silent) because its output goes through `ui.notify`, which is UI-facing. Headless ve… (2026-11-16)
+- [Slash commands work headless via cmd.exe](learnings/slash-commands-work-headless-via-cmd-exe.md) — The "slash commands crash headless" gotcha is actually Git Bash / MSYS-specific path mangling, not a pi limitation. Running from cmd.exe — `… (2026-11-16)
 - [JIT git-audit relevance pattern (R4) verified in practice](learnings/jit-git-audit-relevance-pattern-r4-verified-in-practice.md) — The agent performed a single git-audit call (log + status + last-commit stat), then read exactly the 3 recently-touched files and `wiki_get`… (2026-11-16)
 - [Recap dedupe gap: transcript must include wiki-tool evidence](learnings/recap-dedupe-gap-transcript-must-include-wiki-tool-evidence.md) — `collectTurnText` originally captured only user/assistant text, so the recap could not see that a `wiki_note_*` call had already fired in-tu… (2026-11-16)
 - [shell:true concatenates argv unquoted on Windows](learnings/shell-true-concatenates-argv-unquoted-on-windows.md) — With `shell: true`, args are joined raw, so a `-f` word inside a prompt string became a pi flag (instant exit 1). Prompts must carry their o… (2026-11-16)

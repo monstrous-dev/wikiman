@@ -394,6 +394,9 @@ bt();var ip="index.md";if(window.location.hash){var hp=window.location.hash.subs
         <span>Wiki Pages</span>
         <span class="sidebar-toggle-label" id="closeSidebarBtn">&#215; close</span>
       </div>
+      <div style="padding:8px 10px;border-bottom:1px solid var(--sidebar-border);flex-shrink:0;">
+        <input id="wikiSearch" type="search" placeholder="Filter pages…" autocomplete="off" style="width:100%;box-sizing:border-box;padding:6px 8px;border-radius:6px;border:1px solid var(--sidebar-border);background:transparent;color:inherit;font-size:13px;">
+      </div>
       <div class="sidebar-scroll" id="sidebarScroll"></div>
     </nav>
 
@@ -420,6 +423,24 @@ ${pagesLines.join(",\n")}
 ];
 ${viewerIIFE}
   </script>
+<script>
+(function(){
+  var inp=document.getElementById("wikiSearch");
+  if(!inp)return;
+  inp.addEventListener("input",function(){
+    var q=inp.value.toLowerCase().trim();
+    var shown=0;
+    document.querySelectorAll(".tree-item").forEach(function(b){
+      var hit=!q||b.textContent.toLowerCase().indexOf(q)>=0;
+      b.style.display=hit?"":"none";
+      if(hit)shown++;
+    });
+    document.querySelectorAll(".tree-group-label").forEach(function(l){
+      l.style.display=q?"none":"";
+    });
+  });
+})();
+</script>
 </body>
 </html>`;
 }
