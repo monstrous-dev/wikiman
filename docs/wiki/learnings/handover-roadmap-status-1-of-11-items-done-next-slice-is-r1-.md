@@ -1,35 +1,36 @@
 ---
 type: Learning
-title: "Handover roadmap status: 1 of 11 items done — next slice is R1 + F1 + curator inlining"
-description: As of the "did we implement all improvements?" scorecard review, only **1 of 11** backlog items is done.
+title: "Handover roadmap status: 4 of ~11 items done — next slice is F2 + R2"
+description: Second scorecard review: R1 (self-contained recap), F1 (init data-loss fix) and curator fallback are done; still open: F2, R2–R8, update check, tests. Next slice: F2 + R2.
 tags: [roadmap, backlog, project-status, prioritization]
-timestamp: "2026-11-16T09:01:22.630Z"
+timestamp: "2026-11-16T09:19:20.914Z"
 ---
 
-# Handover roadmap status: 1 of 11 items done — next slice is R1 + F1 + curator inlining
+# Handover roadmap status: 4 of ~11 items done — next slice is F2 + R2
 
-As of the "did we implement all improvements?" scorecard review, only **1 of 11** backlog items is done.
+As of the second "did we implement all improvements?" scorecard (2026-11-16), **~4 of the ~11 planned items are done**, plus the user-requested disconnect/reconnect extra. This supersedes both the earlier 1-of-11 snapshot previously recorded in this file and the interim slice-done note ([[handover-roadmap-r1-f1-curator-slice-done-ec1034a-next-is-r2]]), which retains the slice's commit/rollback and verification details.
 
 **Implemented:**
 - Wiki bundle content (overview, glossary, file-tree descriptions)
-- Disconnect/reconnect (`/wiki:disconnect` + `/wiki:reconnect`, agent-home state keyed per cwd)
+- Disconnect/reconnect (user-requested extra — agent-home state keyed per cwd)
+- **R1** — recap fully self-contained: single in-process completion call via `modelRegistry.complete`, JSON-out → deterministic writes through the `noteInto`/`notePage` funnel; no agentman, no prompt copying
+- **F1** — re-init data-loss fixed: `initBundle` is now ensure-semantics (adds missing surfaces only, authored content never overwritten, `last_updated.md` never reset) — resolves [[wiki-init-on-an-existing-bundle-destroys-authored-content-on]]
+- Curator fallback — `/wiki:update` + staleness prompts fall back to an in-session update when agentman is absent
 
-**Not implemented — handover roadmap R1–R8:**
-- R1 inline the recap, kill the agentman dependency (top priority — the flagship end-of-turn recap silently no-ops without it)
-- R2 session journal / resume card
-- R3 ranked, token-budgeted injection
-- R4 git-aware targeted injection
-- R5 ranked `wiki_search` (still a substring scan)
-- R6 dedupe-at-write, lifecycle, governors
-- R7 `/wiki:digest`, `/wiki:stats`, bootstrap import, viewer search
-- R8 global memory tier
+**Still open:**
+- **F2** — `okf_version` migration layer (schema updates reaching existing bundles) — see [[okf-version-frontmatter-is-stamped-at-scaffold-but-never-con]]
+- **R2** — session journal + resume card ("last time we were mid-X")
+- **R3** — token-budgeted, ranked injection (nav map still inlined wholesale)
+- **R4** — git-aware targeted injection ("3 learnings apply to your recent files")
+- **R5** — ranked `wiki_search` (still a substring scan)
+- **R6** — dedupe-at-write, lifecycle, injection governors
+- **R7** — `/wiki:digest`, `/wiki:stats`, bootstrap import, viewer search
+- **R8** — global (agent-home) memory tier (deliberately last)
+- Optional daily, ask-first "new version available" update check
+- Tests: still zero (only the 21-error tsc baseline)
 
-**Also open from the architecture review:**
-- F1 `/wiki:init` data-loss bug — see [[wiki-init-on-an-existing-bundle-destroys-authored-content-on]]
-- F2 `okf_version` written but never read, so no migration path — see [[okf-version-frontmatter-is-stamped-at-scaffold-but-never-con]]
-- Update propagation mechanisms (extension update check, bundle migrations, curator prompt inlining) — decision recorded, not built
-- Tests: zero (only the type-check config with its 21-error peer-dep baseline)
+**Pending runtime verification:** tsc and parser smoke tests pass, but the recap e2e (fresh session, real turn → note file) has not run yet. That is the handover's verification standard (see [[new-pi-extension-commands-need-a-fresh-session-or-reload-tes]]) and gates building R2 on top of the recap.
 
-**Recommended next slice (proposed, awaiting user go-ahead):** R1 + F1 + curator prompt inlining — they share machinery, and F1 is a genuine data-loss bug sitting in the code today.
+**Recommended next slice (proposed, awaiting user go-ahead):** F2 + R2 — R2 is the first feature that genuinely needs F2's migration layer to reach existing bundles, so they share machinery.
 
 This is point-in-time; update or delete once items land.

@@ -18,7 +18,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -50,6 +50,7 @@ const BUILTIN_IGNORES = [
   // Misc tooling / caches
   ".terraform/", ".yarn/", ".pnpm-store/", ".idea/", ".vscode/",
   "dist/", "build/", "out/", ".cache/", "__pycache__/", ".DS_Store", ".git/",
+  ".wiki-debug.log",
   // Lock files — churn on every install, meaningless for the wiki
   "*.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb",
 ];
@@ -68,6 +69,12 @@ let IS_WORKTREE = false;
 const MEMORY_FILE = "memory.md";
 const MEMORY_START = "<!-- wiki-memory:start -->";
 const MEMORY_END = "<!-- wiki-memory:end -->";
+// F2: the bundle schema this extension ships. Bundles stamped lower (or
+// missing the stamp — legacy 0.1) are migrated additively at session start.
+const BUNDLE_VERSION = "0.2";
+// Folders where the user DECLINED a bundle migration — never re-asked until a
+// newer version than the declined one ships. cwd → declined version string.
+const MIGRATION_DECLINED_FILE = join(homedir(), ".pi", "agent", ".wiki-migration-declined.json");
 
 // ponytail: no hardcoded ignore defaults — project may not be a codebase.
 // .wiki_ignore is only written when the user asks or the LLM generates it.
@@ -422,8 +429,13 @@ const TYPED_FOLDERS = ["learnings", "preferences", "decisions", "rules"];
 async function walkMd(dir: string, acc: string[] = []): Promise<string[]> {
   for (const ent of await readdir(dir, { withFileTypes: true })) {
     const p = join(dir, ent.name);
-    if (ent.isDirectory()) await walkMd(p, acc);
-    else if (ent.name.endsWith(".md")) acc.push(p);
+    if (ent.isDirectory()) {
+      // journal/ is episodic (R2) — not a semantic concept: keep it out of the
+      // validator, nav map, memory digest, and search, or agents get nagged
+      // into "repairing" its frontmatter (observed repair loop in e2e).
+      if (ent.name === "journal") continue;
+      await walkMd(p, acc);
+    } else if (ent.name.endsWith(".md")) acc.push(p);
   }
   return acc;
 }
@@ -715,17 +727,17 @@ interface RecapEnv {
 }
 
 const RECAP_PROMPT = (turnText: string): string =>
-  `You are this project's wiki-recap: decide what one finished coding turn taught us that is worth persisting to docs/wiki/, and return it as JSON.
+  `You are this project's wiki-recap: decide what one finished coding turn taught us that is worth persisting to docs/wiki/, and produce a session journal entry.
 
-Record ONLY (be selective — routine work warrants an EMPTY array):
+Record ONLY (be selective — routine work warrants an EMPTY notes array):
 - "decision" — MAJOR choice or direction shift: architecture, library selection, approach pivot, deprecation.
 - "rule" — reusable heuristic or "always do X" convention; name when it applies and the evidence.
 - "learning" — non-obvious fact, gotcha, or behavior discovered about this codebase.
 - "preference" — a stated user style/tool/convention preference.
 - "concept", "entity", "artifact" — a new project page: Concept = abstract idea, Entity = concrete named thing (endpoint/service/model), Artifact = deliverable.
 
-Return ONLY a JSON array — no prose, no markdown fences:
-[{"type":"learning","title":"Short title","body":"markdown body, 1-3 short paragraphs","tags":["optional"]}]
+Return ONLY one JSON object — no prose, no markdown fences:
+{"notes":[{"type":"learning","title":"Short title","body":"markdown body, 1-3 short paragraphs","tags":["optional"]}],"journal":{"attempted":"what this turn set out to do (max 200 chars)","landed":"what actually changed or was learned (max 200 chars)","open":"what is unfinished or the next step, or empty"}}
 
 --- TURN ---
 ${turnText}
@@ -746,12 +758,18 @@ const RECAP_TYPE_MAP: Record<
 };
 
 interface RecapNote { type: string; title: string; body: string; tags?: string[] }
+interface JournalEntry { attempted?: string; landed?: string; open?: string }
+interface RecapReply { notes: RecapNote[]; journal?: JournalEntry }
 
-/** Parse the model's reply into validated notes; null = not a parseable JSON array. Unknown types and empty fields are dropped. */
-function parseRecapNotes(text: string): RecapNote[] | null {
+/** Parse the model's reply into validated notes + journal; null = unparseable.
+ *  Accepts both the current object shape and a bare notes array (older
+ *  contract). Unknown types and empty fields are dropped. */
+function parseRecapReply(text: string): RecapReply | null {
   const cleaned = text.replace(/```(?:json)?/gi, ""); // fences tolerated even though the prompt forbids them
-  const start = cleaned.indexOf("[");
-  const end = cleaned.lastIndexOf("]");
+  const start = cleaned.indexOf("{") >= 0 ? cleaned.indexOf("{") : cleaned.indexOf("[");
+  const lastObj = cleaned.lastIndexOf("}");
+  const lastArr = cleaned.lastIndexOf("]");
+  const end = Math.max(lastObj, lastArr);
   if (start === -1 || end <= start) return null;
   let parsed: unknown;
   try {
@@ -759,9 +777,23 @@ function parseRecapNotes(text: string): RecapNote[] | null {
   } catch {
     return null;
   }
-  if (!Array.isArray(parsed)) return null;
+  let rawNotes: unknown = parsed;
+  let journal: JournalEntry | undefined;
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const o = parsed as Record<string, unknown>;
+    rawNotes = o.notes ?? [];
+    if (o.journal && typeof o.journal === "object") {
+      const j = o.journal as Record<string, unknown>;
+      journal = {
+        attempted: typeof j.attempted === "string" ? j.attempted : undefined,
+        landed: typeof j.landed === "string" ? j.landed : undefined,
+        open: typeof j.open === "string" ? j.open : undefined,
+      };
+    }
+  }
+  if (!Array.isArray(rawNotes)) return null;
   const notes: RecapNote[] = [];
-  for (const raw of parsed) {
+  for (const raw of rawNotes) {
     if (!raw || typeof raw !== "object") continue;
     const r = raw as Record<string, unknown>;
     const type = typeof r.type === "string" ? r.type.trim().toLowerCase() : "";
@@ -771,7 +803,7 @@ function parseRecapNotes(text: string): RecapNote[] | null {
     const tags = Array.isArray(r.tags) ? r.tags.filter((t): t is string => typeof t === "string") : undefined;
     notes.push({ type, title, body, tags: tags && tags.length ? tags : undefined });
   }
-  return notes;
+  return { notes, journal };
 }
 
 /** Extract text from a completion result (hamster pattern). */
@@ -794,26 +826,66 @@ async function completeOnce(env: RecapEnv, prompt: string): Promise<string> {
   return completionText(result);
 }
 
+/** Append the session journal entry (R2). Deterministic format, episodic:
+ *  docs/wiki/journal/YYYY-MM.md under a ## YYYY-MM-DD heading. */
+async function appendJournal(cwd: string, j: JournalEntry): Promise<void> {
+  const dir = join(wikiDir(cwd), "journal");
+  await mkdir(dir, { recursive: true });
+  const now = new Date().toISOString();
+  const month = now.slice(0, 7);
+  const day = now.slice(0, 10);
+  const cap = (s?: string) => (s ?? "").trim().slice(0, 220).replace(/\r?\n/g, " ");
+  const lines: string[] = [];
+  if (cap(j.attempted)) lines.push(`- attempted: ${cap(j.attempted)}`);
+  if (cap(j.landed)) lines.push(`- landed: ${cap(j.landed)}`);
+  if (cap(j.open)) lines.push(`- open: ${cap(j.open)}`);
+  if (!lines.length) return;
+  const p = join(dir, `${month}.md`);
+  let text = existsSync(p) ? await readFile(p, "utf8") : `# Session journal — ${month}\n`;
+  text = text.includes(`## ${day}`)
+    ? text.trimEnd() + "\n" + lines.join("\n") + "\n"
+    : text.trimEnd() + `\n\n## ${day}\n` + lines.join("\n") + "\n";
+  await writeFile(p, text, "utf8");
+}
+
+/** Latest journal block for the resume-card injection (hard-capped). */
+async function latestJournal(cwd: string): Promise<string> {
+  const dir = join(wikiDir(cwd), "journal");
+  if (!existsSync(dir)) return "";
+  const files = (await readdir(dir)).filter((f) => f.endsWith(".md")).sort();
+  for (let i = files.length - 1; i >= 0; i--) {
+    try {
+      const text = await readFile(join(dir, files[i]), "utf8");
+      const blocks = text.split(/^## /m).filter((b) => b.trim());
+      if (blocks.length) return capChars(("## " + blocks[blocks.length - 1]).split("\n").slice(0, 12).join("\n"), 1200);
+    } catch {
+      /* try an older file */
+    }
+  }
+  return "";
+}
+
 /** Fire-and-forget inline recap. Never throws — every failure is notified or silent. */
 async function runInlineRecap(env: RecapEnv, turnText: string): Promise<void> {
   const snippet = turnText.length > RECAP_MAX_CHARS ? turnText.slice(0, RECAP_MAX_CHARS) + "\n[...truncated]" : turnText;
-  let notes: RecapNote[] | null = null;
+  let reply: RecapReply | null = null;
   let lastErr: unknown;
-  for (let attempt = 1; attempt <= RECAP_MAX_ATTEMPTS && notes === null; attempt++) {
+  for (let attempt = 1; attempt <= RECAP_MAX_ATTEMPTS && reply === null; attempt++) {
     const retry = attempt > 1
-      ? "\n\nIMPORTANT: your previous reply was not parseable. Return ONLY the raw JSON array — no prose, no fences."
+      ? "\n\nIMPORTANT: your previous reply was not parseable. Return ONLY the raw JSON object — no prose, no fences."
       : "";
     try {
-      notes = parseRecapNotes(await completeOnce(env, RECAP_PROMPT(snippet) + retry));
+      reply = parseRecapReply(await completeOnce(env, RECAP_PROMPT(snippet) + retry));
     } catch (e) {
       lastErr = e;
     }
   }
-  if (notes === null) {
+  if (reply === null) {
     if (lastErr) env.notify(`wiki recap failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`, "warning");
     return;
   }
-  if (notes.length === 0) {
+  const notes = reply.notes;
+  if (notes.length === 0 && !reply.journal) {
     env.notify("wiki recap: nothing to record.", "info");
     return;
   }
@@ -829,8 +901,15 @@ async function runInlineRecap(env: RecapEnv, turnText: string): Promise<void> {
       // one bad note must not kill the rest
     }
   }
+  let journalBit = "";
+  if (reply.journal) {
+    try {
+      await appendJournal(env.cwd, reply.journal);
+      journalBit = " + journal";
+    } catch { /* journal is best-effort */ }
+  }
   const summary = Object.entries(counts).map(([t, c]) => `${c} ${t}${c > 1 ? "s" : ""}`).join(", ");
-  env.notify(summary ? `wiki recap: recorded ${summary}.` : "wiki recap: nothing to record.", "info");
+  env.notify(summary || journalBit ? `wiki recap: recorded ${summary || "nothing"}${journalBit}.` : "wiki recap: nothing to record.", "info");
 }
 
 /** Task prompt for when the curator subagent is unavailable: the session LLM
@@ -1122,87 +1201,128 @@ function markerInBranch(ctx: { sessionManager: { getBranch: () => Array<{ type: 
   return false;
 }
 
-async function buildInjection(cwd: string): Promise<string | null> {
+// R3: injection budget constants — enforced in buildInjection, surfaced later
+// by /wiki:stats. Deterministic: identical wiki state → identical injection.
+const INJECTION_MAX_CHARS = 12_000;
+const NAV_MAX_ENTRIES = 40;
+const OVERVIEW_MAX_CHARS = 3_500;
+const MEMORY_MAX_CHARS = 3_000;
+
+const TYPE_WEIGHT: Record<string, number> = {
+  decisions: 5, rules: 4, learnings: 3, architecture: 2.5,
+  "pages/concepts": 2.5, "pages/entities": 2.5, "pages/artifacts": 2,
+  preferences: 2, glossary: 1, root: 1,
+};
+
+function capChars(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max).trimEnd() + "\n…(truncated — use wiki_get for the full content)";
+}
+
+/** Ranked navigation slice: type weight × recency (+ boost for concepts whose
+ *  resource: matches recent git activity, fed by R4). Deterministic. */
+async function rankedNavSlice(
+  cwd: string,
+  limit: number,
+  boostPaths?: Set<string>,
+): Promise<{ lines: string[]; total: number; picked: number }> {
+  const root = wikiDir(cwd);
+  if (!existsSync(root)) return { lines: [], total: 0, picked: 0 };
+  const files = await walkMd(root);
+  interface Entry { rel: string; group: string; title: string; desc: string; score: number }
+  const entries: Entry[] = [];
+  const now = Date.now();
+  for (const f of files) {
+    const base = basename(f);
+    if (RESERVED.has(base)) continue;
+    const rel = relative(root, f).replace(/\\/g, "/").replace(/\.md$/, "");
+    const text = await readFile(f, "utf8");
+    const { yaml } = parseFrontmatter(text);
+    const slash = rel.indexOf("/");
+    const group = slash >= 0 ? rel.slice(0, slash) : "root";
+    try {
+      const st = await stat(f);
+      const ageDays = (now - st.mtimeMs) / 86_400_000;
+      var ageBoost = ageDays < 7 ? 2 : ageDays < 30 ? 1 : 0;
+    } catch {
+      var ageBoost = 0;
+    }
+    let score = (TYPE_WEIGHT[group] ?? 1) + ageBoost;
+    const res = resourcePath(yaml);
+    if (boostPaths && res && boostPaths.has(res.replace(/\\/g, "/"))) score += 3;
+    entries.push({ rel, group, title: yaml.title ? String(yaml.title) : rel, desc: yaml.description ? String(yaml.description) : "", score });
+  }
+  entries.sort((a, b) => b.score - a.score || a.rel.localeCompare(b.rel));
+  const total = entries.length;
+  const picked = entries.slice(0, limit);
+  const lines: string[] = [];
+  let lastGroup = "";
+  for (const e of picked) {
+    if (e.group !== lastGroup) {
+      lines.push(`**${e.group === "root" ? "Core" : e.group}**`);
+      lastGroup = e.group;
+    }
+    lines.push(`- [${e.title}](${e.rel}.md)${e.desc ? ` — ${e.desc}` : ""}`);
+  }
+  if (total > picked.length) lines.push(`- … ${total - picked.length} more concepts — wiki_search("keyword") finds them`);
+  return { lines, total, picked: picked.length };
+}
+
+async function buildInjection(cwd: string, boostPaths?: Set<string>): Promise<string | null> {
   const indexP = join(wikiDir(cwd), "index.md");
   const overviewP = join(wikiDir(cwd), "overview.md");
   if (!existsSync(indexP)) return null;
-  const index = await readFile(indexP, "utf8");
   const overview = existsSync(overviewP) ? await readFile(overviewP, "utf8") : "(no overview.md)";
   const memoryP = join(wikiDir(cwd), MEMORY_FILE);
   const memory = existsSync(memoryP) ? await readFile(memoryP, "utf8") : "";
-  const hasFileTree = existsSync(join(wikiDir(cwd), "architecture", "file-tree.md"));
-  // index.md carries the detailed nav map (auto-maintained section between
-  // NAV markers), so reading it here gives the LLM the full navigational map.
-  // Lead with an unmissable wiki-first lookup rule so the LLM consults the
-  // wiki BEFORE reaching for grep/find/LSP when locating files, code, or logic.
-  // Steps are built as an array so numbering stays correct whether or not the
-  // project has a file-tree.md (no skipped numbers).
-  const steps = [
-    "**Scan the Navigation map in index.md below** (every concept: id — title — description, grouped by folder). It tells you which concept documents the area you need.",
-    "**Read overview.md below** for the project's structure and major subsystems.",
-  ];
-  if (memory) {
-    steps.push("**Read memory.md below** — the live contract: most recent decisions, rules, conventions, development patterns, architecture, global patterns. Follow its links (wiki_get) when a contract item matters to the current task.");
+
+  // R3: the operating contract — short, imperative, position 0. Baseline
+  // evidence: a polite, buried rule did not change tool choice; agents went
+  // grep-first. This must read as the protocol, not as an FYI.
+  const contract = `# WAYFINDING PROTOCOL — how you locate anything in this project
+
+This project keeps an OKF knowledge wiki at docs/wiki/. It is the authoritative index of the codebase and it is ALREADY IN YOUR CONTEXT below (navigation map + overview). Operating rules:
+
+1. LOCATE: for any "where is X / how does X work / which module does Y" question, find the matching concept in the navigation map FIRST.
+2. OPEN: call wiki_get("<concept-id>") on it BEFORE reading any source file — concept bodies name exact paths and the reasoning behind them.
+3. GREP IS LAST RESORT: never run grep/find/rg/ls before steps 1-2. Searching the filesystem before consulting the map is a failure, not a shortcut.
+4. LAZY-LOAD: read concept bodies one at a time via wiki_get. Never read the whole bundle. Never bulk-list docs/wiki/.
+5. PROGRESSIVE DISCLOSURE: orient from the overview + map; open a concept body only when the task needs that depth; quote sparingly.
+6. CLOSE THE LOOP: if the map lacks the area, wiki_discover it, then wiki_note_page what you learned — the next session starts smarter. Call wiki_mark_synced() after wiki edits.
+
+Recording is otherwise automatic (end-of-turn recap) — you only call wiki_note_* when something is urgent or explicit.`;
+
+  const nav = await rankedNavSlice(cwd, NAV_MAX_ENTRIES, boostPaths);
+  const navHeader = (n: { total: number; picked: number }) =>
+    `## Navigation map — top ${n.picked} of ${n.total} concepts (ranked: decisions/rules first, then recency; wiki_search finds the rest)\n\n`;
+  const navSection = nav.lines.length ? navHeader(nav) + nav.lines.join("\n") : "";
+  const journal = await latestJournal(cwd);
+  const journalSection = journal ? `## Journal — last session (resume where it left off)\n\n${journal}` : "";
+
+  const sections: string[] = [
+    contract,
+    journalSection,
+    navSection,
+    `## overview.md\n\n${capChars(overview, OVERVIEW_MAX_CHARS)}`,
+    memory ? `## memory.md — the live contract (recent decisions, rules, conventions)\n\n${capChars(memory, MEMORY_MAX_CHARS)}` : "",
+    `## Tools (lazy-load the wiki — do NOT read it wholesale)\nwiki_get("<id>") read one concept · wiki_search("kw") find concepts · wiki_related("<id>") follow links · wiki_discover explore filesystem · wiki_note_learning/rule/decision/preference/page record knowledge · wiki_mark_synced after wiki edits · wiki_validate check structure · wiki_changelog user-facing change entry · wiki_timestamp timestamps`,
+    SENTINEL,
+  ].filter(Boolean) as string[];
+
+  // Budget enforcement — deterministic shrink order: nav slice first (halving),
+  // then a hard final cap (which leaves a truncation marker).
+  let text = sections.join("\n\n");
+  let navLimit = NAV_MAX_ENTRIES;
+  while (text.length > INJECTION_MAX_CHARS && navLimit > 8) {
+    navLimit = Math.floor(navLimit / 2);
+    const tighter = await rankedNavSlice(cwd, navLimit, boostPaths);
+    const idx = sections.findIndex((s) => s.startsWith("## Navigation map"));
+    sections[idx >= 0 ? idx : 1] = tighter.lines.length ? navHeader(tighter) + tighter.lines.join("\n") : "";
+    const cleaned = sections.filter(Boolean);
+    text = cleaned.join("\n\n");
   }
-  if (hasFileTree) {
-    steps.push("**Consult architecture/file-tree.md** (call wiki_get(\"architecture/file-tree\")) for the complete project file listing with per-file descriptions — use it to jump straight to the right path instead of grepping blind.");
-  }
-  steps.push("**Only then** fall back to grep / find / rg / LSP / wiki_discover to pin down exact lines.");
-  const numbered = steps.map((st, i) => `${i + 1}. ${st}`).join("\n");
-  return `# ⚠ Wiki-first lookup rule (this project keeps a knowledge wiki — USE IT FIRST)
-
-This project maintains an OKF knowledge wiki at docs/wiki/. It is the
-authoritative map for where things live. When you need to LOCATE files, code,
-or logic, follow this order and STOP at the first hit:
-
-${numbered}
-
-Do NOT start a search with grep/find when the wiki already names the relevant
-files or concepts. Read the map first, every time, for every lookup task
-(\"where is X\", \"trace the flow for Y\", \"find the logic that does Z\").
-
----
-
-## index.md
-
-${index}
-
-## overview.md
-
-${overview}
-${memory ? `\n## memory.md — the live contract (recent decisions, rules, conventions, patterns)\n\n${memory}\n` : ""}
-## Wiki tools (lazy-load concept bodies — do NOT read the whole bundle)
-- wiki_get("<concept-id>") — read a concept by id/path (e.g. "learnings/foo", "architecture/file-tree"). Returns body + referenced source file.
-- wiki_search("keyword") — find concepts by keyword (top 15).
-- wiki_related("<concept-id>") — list cross-linked concepts with their descriptions.
-- wiki_discover — explore the project filesystem by path, depth, and extension filter.
-- wiki_changelog — record a changelog entry with user-facing fields (category, user, what, why, next) + developer detail (summary, files, action).
-- Decisions: docs/wiki/decisions/ — wiki_note_decision for MAJOR decisions or direction shifts.
-- Rules: docs/wiki/rules/ — wiki_note_rule for reusable heuristics, guidelines, conventions.
-- Learnings: docs/wiki/learnings/ — wiki_note_learning for non-obvious facts, gotchas, behaviors.
-- Preferences: docs/wiki/preferences/ — wiki_note_preference for stated style/convention preferences.
-- Pages: docs/wiki/pages/ — wiki_note_page to document project concepts, entities, and artifacts with [[wikilinks]]. See TEMPLATES.md for page structures.
-- Keep docs/wiki/last_updated.md current by calling wiki_mark_synced() after substantive edits.
-- See the okf-open-knowledge-format skill for the spec.
-
-## End-of-turn recap (automatic)
-At the end of each turn this extension runs a background recap: one completion
-call mines the turn for MAJOR decisions, reusable rules, learnings, preferences,
-and new concepts/entities/artifacts, and writes them into docs/wiki/ on its own
-— you do NOT need to record these during the turn. You can still call the
-wiki_note_* tools yourself if something is urgent or explicit, but routine
-capture is handled for you.
-
-## Proactive projectbase documentation
-When you BUILD or MODIFY a module, endpoint, data model, or subsystem, ASK
-YOURSELF: "is there a Concept or Entity here the wiki should document?" If yes,
-call wiki_note_page during the turn — don't wait for the recap. Examples:
-- Adding a new API route → Entity page for the endpoint.
-- Introducing a caching layer → Concept page for the invalidation strategy.
-- Creating a database schema → Entity page for each core model.
-This keeps the wiki current as the codebase grows, not as an afterthought.
-
-${SENTINEL}`;
+  if (text.length > INJECTION_MAX_CHARS) text = capChars(text, INJECTION_MAX_CHARS);
+  return text;
 }
 
 // ---------------------------------------------------------------------------
@@ -1235,7 +1355,7 @@ async function initBundle(cwd: string): Promise<void> {
   // Create .wiki_ignore with common project-agnostic patterns
   const wikiIgnore = join(cwd, IGNORE_FILE);
   if (!existsSync(wikiIgnore)) {
-    await writeFile(wikiIgnore, `# .wiki_ignore — files/dirs excluded from staleness detection\n# Add project-specific patterns below. Lines starting with # are comments.\n\n# Wiki self-ignore — wiki edits don't trigger staleness\ndocs/wiki/\n\n# Common build/dependency/cache directories\nnode_modules/\ndist/\nbuild/\n.next/\n.cache/\n__pycache__/\n.DS_Store\n`, "utf8");
+    await writeFile(wikiIgnore, DEFAULT_WIKI_IGNORE, "utf8");
   }
 
   // Why: link typed folders only when they exist — empty ones trip W5, and
@@ -1409,7 +1529,112 @@ a stable structure so pages are consistent, skimmable, and well-linked.
 }
 
 function indexFrontmatter(): string {
-  return `---\nokf_version: "0.1"\n---\n\n`;
+  return `---\nokf_version: "${BUNDLE_VERSION}"\n---\n\n`;
+}
+
+// ---------------------------------------------------------------------------
+// F2: bundle schema migrations (okf_version-gated, additive-only, idempotent)
+// ---------------------------------------------------------------------------
+// "Pushing updates" to existing wiki instances: a bundle self-describes its
+// schema via okf_version in the root index.md frontmatter. Bundles stamped
+// below BUNDLE_VERSION get an additive migration at session start — missing
+// surfaces are created, derived surfaces regenerated, existing authored
+// content NEVER overwritten. UI sessions ask first; headless/RPC sessions
+// (which can't answer dialogs) migrate silently and log. Declines are
+// remembered per cwd until a newer version than the declined one ships.
+
+const DEFAULT_WIKI_IGNORE = `# .wiki_ignore — files/dirs excluded from staleness detection
+# Add project-specific patterns below. Lines starting with # are comments.
+
+# Wiki self-ignore — wiki edits don't trigger staleness
+docs/wiki/
+
+# Common build/dependency/cache directories
+node_modules/
+dist/
+build/
+.next/
+.cache/
+__pycache__/
+.DS_Store
+`;
+
+function loadMigrationDeclined(): Record<string, string> {
+  try {
+    const raw = JSON.parse(readFileSync(MIGRATION_DECLINED_FILE, "utf8"));
+    return raw && typeof raw === "object" ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveMigrationDeclined(cwd: string, version: string): void {
+  try {
+    const m = loadMigrationDeclined();
+    m[cwd] = version;
+    writeFileSync(MIGRATION_DECLINED_FILE, JSON.stringify(m, null, 2) + "\n", "utf8");
+  } catch {
+    /* best-effort */
+  }
+}
+
+async function readBundleVersion(cwd: string): Promise<string | null> {
+  const p = join(wikiDir(cwd), "index.md");
+  if (!existsSync(p)) return null; // no bundle — nothing to migrate
+  try {
+    const { yaml } = parseFrontmatter(await readFile(p, "utf8"));
+    const v = String(yaml.okf_version ?? "").trim();
+    return v || "0.1"; // stamp lost → treat as legacy
+  } catch {
+    return "0.1";
+  }
+}
+
+async function bumpBundleVersion(cwd: string, to: string): Promise<void> {
+  const p = join(wikiDir(cwd), "index.md");
+  if (!existsSync(p)) return;
+  const text = await readFile(p, "utf8");
+  if (/^okf_version:.*$/m.test(text)) {
+    await writeFile(p, text.replace(/^okf_version:.*$/m, `okf_version: "${to}"`), "utf8");
+  } else {
+    await writeFile(p, `---\nokf_version: "${to}"\n---\n\n${text}`, "utf8");
+  }
+}
+
+interface MigrationResult { from: string; to: string; steps: string[] }
+
+async function migrateBundle(cwd: string): Promise<MigrationResult | null> {
+  const from = await readBundleVersion(cwd);
+  if (!from || from === BUNDLE_VERSION) return null;
+  const root = wikiDir(cwd);
+  const steps: string[] = [];
+  for (const d of ["changelog", "journal"]) {
+    if (!existsSync(join(root, d))) {
+      await mkdir(join(root, d), { recursive: true });
+      steps.push(`created ${d}/`);
+    }
+  }
+  const ignoreP = join(cwd, IGNORE_FILE);
+  if (!existsSync(ignoreP)) {
+    await writeFile(ignoreP, DEFAULT_WIKI_IGNORE, "utf8");
+    steps.push("created .wiki_ignore");
+  }
+  if (!existsSync(join(root, MEMORY_FILE))) steps.push("scaffolded memory.md");
+  // Derived surfaces — regenerated unconditionally (idempotent, never loses
+  // authored content: both writers only add managed sections).
+  try { await regenerateMemory(cwd); steps.push("regenerated memory.md"); } catch { /* best effort */ }
+  try { await updateIndexNavMap(cwd); steps.push("regenerated nav map"); } catch { /* best effort */ }
+  await bumpBundleVersion(cwd, BUNDLE_VERSION);
+  // Journal the migration + stamp a fresh sync so our own writes don't trip
+  // the staleness check next session.
+  try {
+    const day = new Date().toISOString().slice(0, 10);
+    await appendFileSync(join(root, "log.md"), `\n## ${day} (migration)\n- **Schema**: ${from} → ${BUNDLE_VERSION} — ${steps.join("; ")}.\n`, "utf8");
+  } catch { /* best effort */ }
+  try {
+    await writeFile(join(root, LAST_UPDATED), `# Last wiki sync\n\n${new Date().toISOString()}\n`, "utf8");
+  } catch { /* best effort */ }
+  return { from, to: BUNDLE_VERSION, steps };
 }
 
 // ---------------------------------------------------------------------------
@@ -1717,6 +1942,31 @@ async function askLLM(prompt: string, timeoutMs = 20000, customType = "wiki-init
 }
 
 export default function (pi: ExtensionAPI) {
+  // WIKI_DEBUG_LOG=1: hermetic e2e seam — append every tool execution to
+  // <cwd>/.wiki-debug.log so probes can be scored on BEHAVIOR (map-first vs
+  // grep-first, lazy-load discipline) rather than on final answers alone.
+  if (process.env.WIKI_DEBUG_LOG === "1") {
+    pi.on("tool_execution_start", async (_event, ctx) => {
+      try {
+        const ev = _event as { toolName?: string; args?: unknown };
+        const args = JSON.stringify(ev.args ?? {}).slice(0, 250);
+        appendFileSync(join(ctx.cwd, ".wiki-debug.log"), `${new Date().toISOString()} START ${ev.toolName ?? "?"} ${args}\n`, "utf8");
+      } catch {
+        /* debug logging must never break a session */
+      }
+    });
+    pi.on("tool_execution_end", async (_event, ctx) => {
+      try {
+        const ev = _event as { toolName?: string; isError?: boolean; durationMs?: number };
+        if (ev.isError) {
+          appendFileSync(join(ctx.cwd, ".wiki-debug.log"), `${new Date().toISOString()} END ${ev.toolName ?? "?"} ERROR (${ev.durationMs ?? "?"}ms)\n`, "utf8");
+        }
+      } catch {
+        /* debug logging must never break a session */
+      }
+    });
+  }
+
   // Linked worktree: reads work (the wiki is committed — it travels with the
   // branch), writes refuse (single source of truth in the main checkout; stray
   // background writes in worktrees caused stash/pull conflicts). Computed once
@@ -1802,6 +2052,32 @@ export default function (pi: ExtensionAPI) {
       return; // nothing to check yet
     }
 
+    // F2: migrate legacy bundle schemas BEFORE staleness (the migration bumps
+    // last_updated itself). Ask-first with a real UI; silent in headless/RPC
+    // where dialogs can't be answered. Declines are remembered per version.
+    const bundleVersion = await readBundleVersion(cwd);
+    if (bundleVersion && bundleVersion !== BUNDLE_VERSION) {
+      const declined = loadMigrationDeclined()[cwd];
+      const canAsk = ctx.hasUI && ctx.mode !== "rpc";
+      const doIt = !canAsk
+        ? true // headless/RPC: additive-only migration is dialog-safe by design
+        : declined === bundleVersion
+          ? false // already declined for this exact version — never re-ask
+          : await ctx.ui.confirm("Wiki schema update", `This wiki bundle is okf_version ${bundleVersion}; this extension ships ${BUNDLE_VERSION}. Migrate now? Additive only: missing surfaces (changelog/, journal/, memory.md, nav map) are added, existing content is never overwritten.`);
+      if (doIt) {
+        try {
+          const migration = await migrateBundle(cwd);
+          if (migration && canAsk) {
+            ctx.ui.notify(`Wiki migrated ${migration.from} → ${migration.to} (${migration.steps.length} steps).`, "info");
+          }
+        } catch (e) {
+          if (canAsk) ctx.ui.notify(`Wiki migration failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+        }
+      } else if (canAsk) {
+        saveMigrationDeclined(cwd, bundleVersion);
+      }
+    }
+
     // Defer slightly so UI is ready and we don't block startup.
     try {
       await runStalenessCheck(ctx);
@@ -1849,11 +2125,12 @@ export default function (pi: ExtensionAPI) {
     if (IS_WORKTREE) return;
     // Disconnected: no end-of-turn auto-recap.
     if (isDisconnected(ctx.cwd)) return;
-    // Headless/print/JSON/RPC mode (incl. all delegated subagents) — never recap.
-    // This is also the recursion guard: spawned children skip this path instead
-    // of spawning recaps of their own. (hasUI is TRUE in RPC children — ui
-    // requests go over stdout — so the rpc check is required, not optional.)
-    if (!ctx.hasUI || ctx.mode === "rpc") return;
+    // Headless/print/JSON modes never recap unless WIKI_RECAP_IN_HEADLESS=1
+    // (hermetic e2e hatch for probe sessions). RPC is ALWAYS excluded — this
+    // is also the recursion guard: spawned children skip this path instead of
+    // spawning recaps of their own.
+    if (ctx.mode === "rpc") return;
+    if (!ctx.hasUI && process.env.WIKI_RECAP_IN_HEADLESS !== "1") return;
     // Skip recap for hidden/internal turns we dispatched ourselves (init
     // auto-doc, staleness delegation steer). Checked + cleared here.
     if (suppressRecap) { suppressRecap = false; return; }
@@ -1872,7 +2149,20 @@ export default function (pi: ExtensionAPI) {
     if (!model || !modelRegistry) return;
     if (!(modelRegistry.hasConfiguredAuth?.(model) ?? true)) return;
     const notify = (msg: string, type?: "info" | "warning" | "error") => staleSafeCtx(ctx).ui.notify(msg, type);
-    scheduleRecap({ cwd: ctx.cwd, model, modelRegistry, notify }, turnText);
+    const env: RecapEnv = { cwd: ctx.cwd, model, modelRegistry, notify };
+    if (!ctx.hasUI) {
+      // Headless hatch (WIKI_RECAP_IN_HEADLESS=1): NO debounce — pi -p exits as
+      // soon as handlers resolve, so a timer dies un-fired (observed: journal
+      // never landed). Run inline; pi awaits agent_end handlers, which keeps
+      // the process alive until the completion returns.
+      try {
+        await runInlineRecap(env, turnText);
+      } catch (e) {
+        try { env.notify(`wiki recap failed: ${e instanceof Error ? e.message : String(e)}`, "warning"); } catch { /* stale */ }
+      }
+      return;
+    }
+    scheduleRecap(env, turnText);
   });
 
   // -------------------------------------------------------------------------
@@ -2639,6 +2929,8 @@ export default function (pi: ExtensionAPI) {
           if (!ok) return;
         }
         await initBundle(ctx.cwd);
+        // Explicit init also upgrades a legacy bundle schema (F2).
+        try { await migrateBundle(ctx.cwd); } catch { /* best effort */ }
         // Explicit init overrides an earlier decline.
         saveOmitted(loadOmitted().filter((d) => d !== ctx.cwd));
         ctx.ui.notify("docs/wiki/ ready — missing scaffold files added, existing content kept.", "info");

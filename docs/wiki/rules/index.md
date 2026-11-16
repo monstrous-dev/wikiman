@@ -1,3 +1,4 @@
 # Rules
 
 - [Bundle migrations are additive-only, idempotent, and always ask-first](./bundle-migrations-are-additive-only-idempotent-and-always-as.md) - **Guideline**: Any new docs/wiki/ bundle surface or feature must ship as an **additive-only, idempotent migration step** keyed on a bump of the bundle's `okf_ve
+- [Migration prompts: ask in UI, silent headless](./migration-prompts-ask-in-ui-silent-headless.md) - Bundle version migration prompts ask-first in the real UI but migrate silently in headless/RPC sessions, with per-cwd + per-version decline memory. Verified via

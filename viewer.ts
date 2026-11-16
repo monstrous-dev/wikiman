@@ -16,7 +16,7 @@ import { spawn } from "node:child_process";
 
 const WIKI_DIR_NAME = "docs/wiki";
 const SKIP_FILES = new Set(["log.md", "last_updated.md"]);
-const SKIP_PREFIXES = ["changelog/"];
+const SKIP_PREFIXES = ["changelog/", "journal/"];
 
 function wikiDir(cwd: string): string {
   return join(cwd, WIKI_DIR_NAME);
