@@ -711,6 +711,10 @@ function getApi(): { pi: ExtensionAPI } {
 // cleared at the top of the agent_end handler. The recap subagent itself runs
 // in a child process — its agent_end fires there, not here, so no feedback loop.
 let suppressRecap = false;
+// Set when a staleness sync task was queued to ride the user's next prompt
+// (no-runner fallback). wiki_mark_synced clears it + flips the footer to
+// synced — that tool call is the completion signal of the queued task.
+let stalenessQueued = false;
 
 // Debounce timer for the recap spawn. agent_end fires once per agent RUN, and a
 // single user prompt can chain multiple runs (prompt -> continue for
@@ -1153,6 +1157,21 @@ async function readLastUpdated(cwd: string): Promise<number> {
   return Number.isNaN(t) ? 0 : t;
 }
 
+/** Background-sync probe: is the intelligent-delegation runner installed AND
+ *  the wiki-curator agent prompt present? Used to decide between spawning the
+ *  curator as a true background child vs piggybacking the next user prompt. */
+async function runnerCanSpawn(cwd: string): Promise<boolean> {
+  try {
+    const [, agentsMod] = await Promise.all([
+      import("../intelligent-delegation/runner.ts"),
+      import("../intelligent-delegation/agents.ts"),
+    ]);
+    return agentsMod.discoverAgents(cwd, "both").agents.some((a: any) => a.name === CURATOR_AGENT);
+  } catch {
+    return false;
+  }
+}
+
 async function runStalenessCheck(rawCtx: { cwd: string; ui: ExtensionAPI extends never ? never : any; hasUI: boolean; isProjectTrusted: () => boolean }): Promise<void> {
   // ctx is used after awaits + a confirm dialog that can stay open across a
   // session switch/reload — staleSafeCtx prevents a stale ctx from crashing pi.
@@ -1182,31 +1201,15 @@ async function runStalenessCheck(rawCtx: { cwd: string; ui: ExtensionAPI extends
       : `wiki: ${dot("warning")} issues`;
   ctx.ui.setStatus(FOOTER_KEY, staleMsg);
 
-  // Build the update prompt (used whether we confirm or inject directly).
   const task = update.task;
 
-  // Delegation prompt: instruct the main LLM to fire-and-forget to wiki-curator.
-  // This keeps the main conversation responsive — wiki-curator runs in an
-  // isolated context, results notified independently.
-  // ponytail: display:false on the delegation prompt — the user already saw the
-  // confirm dialog, and the prompt contains LLM-only instructions that would
-  // read as noise in the chat ("Do NOT describe the delegation", etc.).
-  const delegationPrompt =
-    `Wiki staleness: ${changed.length} file(s) changed.\n` +
-    `If the "delegate" tool is available: delegate this to the wiki-curator agent in async mode with the task below. Do NOT describe the delegation — continue with the user's next request.\n` +
-    `If it is NOT available: perform the task yourself in this turn using your wiki_* tools (dedupe first, then wiki_mark_synced).\n\n` +
-    `--- BEGIN TASK ---\n${task}\n--- END TASK ---\n`;
-
-  // RPC mode (e.g. a delegated wiki-curator sub-agent): there is no user to
-  // confirm with — and pi core awaits session_start handlers BEFORE attaching
-  // the RPC stdin reader, so the confirm can never be answered; with no active
-  // handles left the event loop drains and the process exits 0 before the
-  // delegated task ever runs. Skip entirely (footer status already set above).
+  // RPC mode (e.g. a delegated wiki-curator sub-agent): never spawn background
+  // children from here — skip entirely (footer status already set above).
   if (ctx.mode === "rpc") return;
 
   if (!ctx.hasUI) {
-    // Headless: inject full task as-is (no delegate tool available).
-    // ponytail: display:false — the task text is LLM-oriented, not user-facing.
+    // Headless: ride the next turn as a hidden queued message — no run is
+    // triggered; the task processes only if a continuation happens.
     getApi().pi.sendMessage(
       { customType: "wiki-staleness", content: task, display: false },
       { triggerTurn: false, deliverAs: "nextTurn" },
@@ -1214,28 +1217,40 @@ async function runStalenessCheck(rawCtx: { cwd: string; ui: ExtensionAPI extends
     return;
   }
 
-  // Asked within the last hour — don't nag again (footer already shows
-  // the staleness signal; only the dialog is suppressed).
-  if (askedRecently(cwd)) return;
-
-  markAsked(cwd);
-  const wantUpdate = await ctx.ui.confirm(
-    "Wiki staleness",
-    changed.length > 0
-      ? `Wiki may be stale: ${changed.length} file(s) changed since last sync. Update via wiki-curator?`
-      : staleConcepts.length > 0
-        ? `${staleConcepts.length} concept(s) reference source files that changed after they were written. Refresh via wiki-curator?`
-        : `OKF issues detected in the wiki. Review via wiki-curator?`,
-  );
-  if (wantUpdate) {
-    ctx.ui.setStatus(FOOTER_KEY, "wiki: delegating to wiki-curator...");
-    // This steer becomes its own agent turn — suppress the recap for it.
-    suppressRecap = true;
-    getApi().pi.sendMessage(
-      { customType: "wiki-staleness", content: delegationPrompt, display: false },
-      { triggerTurn: true, deliverAs: "steer" },
+  // TUI — background-first: wiki updates must never interrupt the user.
+  // 1) Subagent runner available → spawn the curator DIRECTLY: a background
+  //    child process, no dialog, no session turn. The user keeps working;
+  //    the completion notify lands on its own.
+  if (await runnerCanSpawn(cwd)) {
+    ctx.ui.setStatus(FOOTER_KEY, `wiki: ${dot("warning")} updating (background)`);
+    spawnWikiAgent(
+      ctx.cwd, CURATOR_AGENT, task, parentModelRef(ctx),
+      (msg, type) => {
+        try {
+          staleSafeCtx(ctx).ui.notify(msg, type);
+          // Approximate post-sync footer; the next session_start corrects it.
+          if (type === "info") ctx.ui.setStatus(FOOTER_KEY, `wiki: ${dot("success")} synced (background)`);
+          else ctx.ui.setStatus(FOOTER_KEY, staleMsg);
+        } catch {
+          /* stale ctx */
+        }
+      },
     );
+    return;
   }
+
+  // 2) No runner → piggyback the sync on the user's NEXT prompt as a hidden
+  //    queued message (display:false, no run triggered): zero interruptions,
+  //    the sync rides along silently when they next interact. The 1h cooldown
+  //    keeps queued tasks from stacking on every session start.
+  if (askedRecently(cwd)) return;
+  markAsked(cwd);
+  stalenessQueued = true;
+  ctx.ui.setStatus(FOOTER_KEY, `wiki: ${dot("warning")} stale — sync queued (rides your next prompt)`);
+  getApi().pi.sendMessage(
+    { customType: "wiki-staleness", content: task, display: false },
+    { triggerTurn: false, deliverAs: "nextTurn" },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -2772,6 +2787,16 @@ export default function (pi: ExtensionAPI) {
       }
       const now = new Date().toISOString();
       await writeFile(join(wikiDir(cwd), LAST_UPDATED), `# Last wiki sync\n\n${now}\n`, "utf8");
+      // Queued-staleness completion: flip the footer from "sync queued" to
+      // synced so the user sees the background sync landing.
+      if (stalenessQueued) {
+        stalenessQueued = false;
+        try {
+          ctx.ui.setStatus(FOOTER_KEY, `wiki: ${ctx.ui.theme.fg("success", "●")} synced`);
+        } catch {
+          /* stale ctx */
+        }
+      }
       // Also append a log.md entry.
       try {
         const logP = join(wikiDir(cwd), "log.md");

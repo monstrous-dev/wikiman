@@ -8,7 +8,7 @@ okf_version: "0.2"
 Auto-generated digest of the most recent conventions, decisions, rules and
 development patterns, plus architecture and global patterns — newest first.
 The actual files live in the wiki subfolders; follow the links (clickable in /wiki).
-Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T12:29:12.456Z.
+Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T12:30:45.585Z.
 
 ## Recent Decisions
 
@@ -30,6 +30,7 @@ Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T12
 
 ## Recent Learnings — development patterns
 
+- [Extensions load at session start only](learnings/extensions-load-at-session-start-only.md) — pi extensions cannot hot-reload their own code: after a self-update the running session still executes the old version until `/reload` is is… (2026-11-16)
 - [Wiki sync triggers: command vs staleness check vs version flows](learnings/wiki-sync-triggers-command-vs-staleness-check-vs-version-flo.md) — Three independent wiki triggers exist: `/wiki:update` (on-demand full sync), a session-start staleness check keyed to *code* changes vs `doc… (2026-11-16)
 - [Launching pi TUI QA windows on Windows](learnings/launching-pi-tui-qa-windows-on-windows.md) — To get a visible pi TUI session for QA on Windows, launch via `wt -w new` — a plain `Start-Process` of a `.cmd` lands in a hidden conhost. W… (2026-11-16)
 - [TUI-only surfaces untested by headless e2e](learnings/tui-only-surfaces-untested-by-headless-e2e.md) — wikiman's e2e probes run headless (`pi -p`), which silently skips all UI-facing paths: confirm dialogs (staleness, migration, re-init scaffo… (2026-11-16)
@@ -49,7 +50,6 @@ Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T12
 - [Handover roadmap status: 4 of ~11 items done — next slice is F2 + R2](learnings/handover-roadmap-status-1-of-11-items-done-next-slice-is-r1-.md) — Second scorecard review: R1 (self-contained recap), F1 (init data-loss fix) and curator fallback are done; still open: F2, R2–R8, update che… (2026-11-16)
 - [/wiki:init re-init data loss (F1) — FIXED via ensure-semantics init](learnings/wiki-init-on-an-existing-bundle-destroys-authored-content-on.md) — initBundle() used to unconditionally overwrite authored overview/glossary/log/last_updated on re-init (only pages/ and .wiki_ignore were gua… (2026-11-16)
 - [Handover roadmap: R1 + F1 + curator slice done (ec1034a) — next is R2 journal](learnings/handover-roadmap-r1-f1-curator-slice-done-ec1034a-next-is-r2.md) — The **R1 + F1 + curator-inlining slice is done** — commit `ec1034a` (2026-11-16), (2026-11-16)
-- [New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p](learnings/new-pi-extension-commands-need-a-fresh-session-or-reload-tes.md) — Two gotchas when developing this pi extension (referenced as the "house gotcha" but never written down until now): (2026-11-16)
 
 ## Architecture
 
