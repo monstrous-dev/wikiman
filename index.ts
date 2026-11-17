@@ -23,6 +23,7 @@ import { homedir } from "node:os";
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { join, relative, dirname, basename, extname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { generateWikiDataJs, generateWikiViewerHtml, serveWikiViewer, shutdownAllWikiServers } from "./viewer.js";
 
 const WIKI_DIR_NAME = "docs/wiki";
@@ -3374,7 +3375,7 @@ export default function (pi: ExtensionAPI) {
 
   // --- /wiki:self-update — update the extension itself (R8 companion) ---
   pi.registerCommand("wiki:self-update", {
-    description: "Update the wikiman extension to the latest published version (runs pi update; then /reload or restart pi to load it)",
+    description: "Update the wikiman extension to the latest published version (git pull on this install, or pi update; then /reload or restart pi to load it)",
     handler: async (_args, ctx) => {
       ctx = staleSafeCtx(ctx);
       if (!ctx.isProjectTrusted()) {
@@ -3382,33 +3383,60 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       if (!ctx.hasUI) {
-        ctx.ui.notify("/wiki:self-update needs the TUI (it asks first). Run: pi update git:github.com/monstrous-dev/wikiman", "warning");
+        ctx.ui.notify("/wiki:self-update needs the TUI (it asks first). Run: pi update --extensions", "warning");
         return;
       }
+      // Update the install we are ACTUALLY running from. bugfix: many installs
+      // are loose git checkouts (or local dirs) under extensions/ — they are not
+      // registered pi packages, so 'pi update git:…' fails with 'No matching
+      // package found'. A git checkout updates via git pull --ff-only; only
+      // non-git installs fall back to pi update --extensions.
+      const ownDir = dirname(fileURLToPath(import.meta.url));
+      const isGitCheckout = existsSync(join(ownDir, ".git"));
       const ok = await ctx.ui.confirm(
         "Update wikiman",
-        "Run 'pi update git:github.com/monstrous-dev/wikiman' now?\n\nSafe: pi keeps running the old code until you /reload or restart — nothing breaks mid-session.",
+        isGitCheckout
+          ? `Update this extension from git?\n(git -C ${ownDir} fetch + pull --ff-only)\n\nSafe: pi keeps running the old code until you /reload or restart.`
+          : "Run 'pi update --extensions' now?\n\nSafe: pi keeps running the old code until you /reload or restart.",
       );
       if (!ok) return;
-      try {
-        ctx.ui.setStatus(FOOTER_KEY, "wiki: updating extension...");
-        const out = execSync("pi update git:github.com/monstrous-dev/wikiman", {
-          timeout: 180_000,
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-        });
+      const finish = (out: string) => {
         try {
           writeFileSync(UPDATE_CHECK_FILE, JSON.stringify({ at: Date.now(), latest: "" }), "utf8");
         } catch {
           /* throttle state is best-effort */
         }
         ctx.ui.setStatus(FOOTER_KEY, undefined);
+        let version = "";
+        try {
+          version = String((JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version?: string }).version ?? "");
+        } catch {
+          /* version unknown */
+        }
         const tail = out.trim() ? "\n  " + out.trim().split(/\r?\n/).slice(-3).join("\n  ") : "";
-        ctx.ui.notify(`wikiman updated.${tail}\nRun /reload or restart pi to load the new version.`, "info");
+        ctx.ui.notify(`wikiman updated${version ? ` (now v${version})` : ""}.${tail}\nRun /reload or restart pi to load the new version.`, "info");
+      };
+      try {
+        if (isGitCheckout) {
+          ctx.ui.setStatus(FOOTER_KEY, "wiki: updating extension (git)...");
+          execSync("git fetch origin", { cwd: ownDir, timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] });
+          const out = execSync("git pull --ff-only", { cwd: ownDir, timeout: 120_000, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+          finish(out);
+        } else {
+          ctx.ui.setStatus(FOOTER_KEY, "wiki: updating extension...");
+          const out = execSync("pi update --extensions", { timeout: 180_000, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+          finish(out);
+        }
       } catch (e) {
         ctx.ui.setStatus(FOOTER_KEY, undefined);
-        const msg = e instanceof Error ? e.message : String(e);
-        ctx.ui.notify(`Self-update failed: ${msg.slice(0, 200)}\nTry manually: pi update git:github.com/monstrous-dev/wikiman`, "error");
+        const raw = e instanceof Error ? e.message : String(e);
+        if (/Already up to date/i.test(raw)) {
+          ctx.ui.notify("wikiman is already up to date.", "info");
+        } else if (/local modifications|would be overwritten|Please commit/i.test(raw)) {
+          ctx.ui.notify(`Self-update blocked: this checkout has local changes. Commit or stash them (wiki notes count!), then retry.\n${raw.slice(0, 200)}`, "error");
+        } else {
+          ctx.ui.notify(`Self-update failed: ${raw.slice(0, 200)}\nTry manually: git -C ${ownDir} pull --ff-only  ·  or: pi update --extensions`, "error");
+        }
       }
     },
   });
