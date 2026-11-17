@@ -878,11 +878,11 @@ function completionText(result: unknown): string {
   return msg.content.filter((c) => c?.type === "text").map((c) => c?.text ?? "").join("\n").trim();
 }
 
-async function completeOnce(env: RecapEnv, prompt: string): Promise<string> {
+async function completeOnce(env: RecapEnv, prompt: string, timeoutMs = RECAP_TIMEOUT_MS): Promise<string> {
   const result = await env.modelRegistry.complete(
     env.model,
     { messages: [{ role: "user", content: [{ type: "text", text: prompt }] }] } as Parameters<typeof env.modelRegistry.complete>[1],
-    { signal: AbortSignal.timeout(RECAP_TIMEOUT_MS), sessionId: randomUUID() },
+    { signal: AbortSignal.timeout(timeoutMs), sessionId: randomUUID() },
   );
   const asMsg = result as { stopReason?: string; errorMessage?: string };
   if (asMsg?.stopReason === "error" || asMsg?.stopReason === "aborted") {
@@ -1524,7 +1524,7 @@ Recording is otherwise automatic (end-of-turn recap) — you only call wiki_note
 // Bundle init scaffold
 // ---------------------------------------------------------------------------
 
-async function initBundle(cwd: string): Promise<void> {
+async function initBundle(cwd: string): Promise<{ autoDocNeeded: boolean }> {
   const root = wikiDir(cwd);
   // F1 (ensure-semantics): a re-init only ADDS missing scaffold files —
   // authored content (overview, glossary, concepts…) is never overwritten,
@@ -1666,36 +1666,54 @@ a stable structure so pages are consistent, skimmable, and well-linked.
     "utf8",
   );
 
-  // Ask LLM to auto-generate overview + glossary + file tree descriptions —
-  // only for a FRESH bundle. On a re-init, authored overview/glossary and the
-  // described file tree are kept exactly as-is (F1: no content destruction).
-  if (!hadAuthored) try {
-    const scan = await scanProjectContents(cwd);
-    const llmPrompt = `I've scanned the project at "${cwd}". Based on the summary below, write content for a knowledge wiki (docs/wiki/) that documents this project.\n\nProject profile:\n${JSON.stringify(scan, null, 2)}\n\nAlso fill in the [] description placeholders for each entry in this file tree.\n\nOutput exactly this format:\n\n## Overview\n(2-4 paragraphs describing the project's contents and organization)\n\n## Glossary\n| Term | Definition |\n|------|------------|\n\n## File tree descriptions\npath — description\npath — description`;
+  // Build the detailed nav map into index.md last so it reflects any LLM-written titles/descriptions.
+  await updateIndexNavMap(cwd);
+  await regenerateMemory(cwd);
+  return { autoDocNeeded: !hadAuthored };
+}
 
-    // This hidden LLM turn triggers its own agent_end — suppress the recap for it.
-    suppressRecap = true;
-    const result = await askLLM(llmPrompt, 30000);
+interface AutoDocEnv { cwd: string; model: unknown; modelRegistry: any; notify: (msg: string, type?: "info" | "warning" | "error") => void; }
 
-    // Parse result — extract Overview, Glossary, and File tree descriptions sections
-    const overviewMatch = result.match(/## Overview\n([\s\S]*?)(?=\n## )/);
-    const glossaryMatch = result.match(/## Glossary\n([\s\S]*?)(?=\n## |$)/);
-    const treeMatch = result.match(/## File tree descriptions\n([\s\S]*?)$/);
+const AUTODOC_TIMEOUT_MS = 60_000;
 
-    if (overviewMatch) {
-      const overviewContent = overviewMatch[1].trim();
-      await writeFile(join(root, "overview.md"), `${buildFrontmatter({ type: "System Overview", title: "Overview", description: "What this project contains and its structure.", timestamp: new Date().toISOString() })}\n# Overview\n\n${overviewContent}\n`, "utf8");
+/** Background auto-doc for a FRESH bundle: scan + one completion call ->
+ *  overview/glossary/file-tree descriptions. Deterministic writes; stubs
+ *  remain on failure. Throws only to the fire-and-forget wrapper. */
+async function generateAutoDocInline(env: AutoDocEnv): Promise<void> {
+  const scan = await scanProjectContents(env.cwd);
+  const llmPrompt = `I've scanned the project at "${env.cwd}". Based on the summary below, write content for a knowledge wiki (docs/wiki/) that documents this project.\n\nProject profile:\n${JSON.stringify(scan, null, 2)}\n\nAlso fill in the [] description placeholders for each entry in this file tree.\n\nOutput exactly this format:\n\n## Overview\n(2-4 paragraphs describing the project's contents and organization)\n\n## Glossary\n| Term | Definition |\n|------|------------|\n\n## File tree descriptions\npath — description\npath — description`;
+  let text = "";
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 2 && !text; attempt++) {
+    const retry = attempt > 1 ? "\n\nIMPORTANT: your previous reply was not usable. Return the three sections in the exact format shown above." : "";
+    try {
+      const r = await completeOnce(env, llmPrompt + retry, AUTODOC_TIMEOUT_MS);
+      if (r.trim()) text = r;
+    } catch (e) {
+      lastErr = e;
     }
+  }
+  if (!text) throw lastErr ?? new Error("auto-doc produced no output");
 
-    if (glossaryMatch) {
-      const glossaryContent = glossaryMatch[1].trim();
-      await writeFile(join(root, "glossary.md"), `${buildFrontmatter({ type: "Glossary", title: "Glossary", description: "Key terms for this project.", timestamp: new Date().toISOString() })}\n# Glossary\n\n${glossaryContent}\n`, "utf8");
-    }
+  const root = wikiDir(env.cwd);
+  const archDir = join(root, "architecture");
+  const overviewMatch = text.match(/## Overview\n([\s\S]*?)(?=\n## )/);
+  const glossaryMatch = text.match(/## Glossary\n([\s\S]*?)(?=\n## |$)/);
+  const treeMatch = text.match(/## File tree descriptions\n([\s\S]*?)$/);
 
-    if (treeMatch) {
-      const treeDescriptions = treeMatch[1].trim();
-      // Apply descriptions to file-tree.md — replace [] with descriptions
-      let currentTree = await readFile(join(archDir, "file-tree.md"), "utf8");
+  if (overviewMatch) {
+    const overviewContent = overviewMatch[1].trim();
+    await writeFile(join(root, "overview.md"), `${buildFrontmatter({ type: "System Overview", title: "Overview", description: "What this project contains and its structure.", timestamp: new Date().toISOString() })}\n# Overview\n\n${overviewContent}\n`, "utf8");
+  }
+  if (glossaryMatch) {
+    const glossaryContent = glossaryMatch[1].trim();
+    await writeFile(join(root, "glossary.md"), `${buildFrontmatter({ type: "Glossary", title: "Glossary", description: "Key terms for this project.", timestamp: new Date().toISOString() })}\n# Glossary\n\n${glossaryContent}\n`, "utf8");
+  }
+  if (treeMatch) {
+    const treeDescriptions = treeMatch[1].trim();
+    const treePath = join(archDir, "file-tree.md");
+    if (existsSync(treePath)) {
+      const currentTree = await readFile(treePath, "utf8");
       const lines = currentTree.split("\n");
       const descMap = new Map<string, string>();
       for (const line of treeDescriptions.split("\n")) {
@@ -1703,24 +1721,59 @@ a stable structure so pages are consistent, skimmable, and well-linked.
         if (m) descMap.set(m[1].trim(), m[2].trim());
       }
       const newLines = lines.map((l) => {
-        const m = l.match(/^(.*)(\[])$/);
+        const m = l.match(/^(.*)(\[\])$/);
         if (m) {
-          const bare = m[1].replace(/[├└──│ ]/g, "").trim();
+          const bare = m[1].replace(/[├└─│ ]/g, "").trim();
           const desc = descMap.get(bare) || "";
           return l.replace("[]", desc ? `[${desc}]` : "");
         }
         return l;
       });
-      await writeFile(join(archDir, "file-tree.md"), newLines.join("\n"), "utf8");
+      await writeFile(treePath, newLines.join("\n"), "utf8");
     }
-  } catch (e) {
-    // LLM auto-documentation is best-effort — stubs remain if it fails
-    console.error("wiki auto-document failed:", e instanceof Error ? e.message : String(e));
   }
+  // Derived surfaces over the final content.
+  await updateIndexNavMap(env.cwd);
+  await regenerateMemory(env.cwd);
+}
 
-  // Build the detailed nav map into index.md last so it reflects any LLM-written titles/descriptions.
-  await updateIndexNavMap(cwd);
-  await regenerateMemory(cwd);
+/** Fire the background auto-doc after a fresh scaffold. Subagent window when
+ *  the runner is present, invisible in-process completion otherwise. The user
+ *  never waits on init — the scaffold returns instantly and content lands
+ *  behind it. Never throws. */
+function fireAutoDoc(cwd: string, ctx: any, autoDocNeeded: boolean): void {
+  if (!autoDocNeeded) return;
+  const notify = (msg: string, type?: "info" | "warning" | "error") => {
+    try {
+      staleSafeCtx(ctx).ui.notify(msg, type);
+    } catch {
+      /* stale ctx */
+    }
+  };
+  notify("docs/wiki/ scaffolded — auto-doc (overview/glossary/file-tree) running in the background.", "info");
+  (async () => {
+    if (await runnerCanSpawn(cwd)) {
+      // Subagent window path: the curator bootstraps the bundle off-session.
+      notify("auto-doc delegated to a wiki-curator subagent.", "info");
+      spawnWikiAgent(
+        cwd, CURATOR_AGENT,
+        `Bootstrap this fresh OKF wiki bundle at docs/wiki/. Inspect the codebase (README, package manifests, source tree — use read/grep/ls), then write docs/wiki/overview.md (frontmatter type "System Overview", title "Overview", 2-4 paragraphs on contents + organization), docs/wiki/glossary.md (frontmatter type "Glossary", a Term/Definition table of the project's vocabulary), and replace the [] placeholders in docs/wiki/architecture/file-tree.md with per-file descriptions. Then call wiki_mark_synced. Do not touch other files.`,
+        parentModelRef(ctx),
+        notify,
+      );
+      return;
+    }
+    const model = (ctx as any).model;
+    const modelRegistry = (ctx as any).modelRegistry;
+    if (!model || !modelRegistry || !(modelRegistry.hasConfiguredAuth?.(model) ?? true)) {
+      notify("overview/glossary are stubs — no model configured to auto-fill them. Ask the agent to fill them or run /wiki:update later.", "info");
+      return;
+    }
+    await generateAutoDocInline({ cwd, model, modelRegistry, notify });
+    notify("wiki auto-doc done — overview, glossary, and file-tree descriptions populated.", "info");
+  })().catch((e) => {
+    notify(`wiki auto-doc failed: ${e instanceof Error ? e.message : String(e)} — stubs remain.`, "warning");
+  });
 }
 
 // Ask-first update check: once per 24h, compare installed version against the
@@ -2160,31 +2213,6 @@ async function scanProjectContents(cwd: string): Promise<ProjectScan> {
 // Pending LLM prompts (for init auto-documentation)
 // ---------------------------------------------------------------------------
 
-const pendingPrompts = new Map<string, {
-  resolve: (text: string) => void;
-  reject: (err: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
-}>();
-
-async function askLLM(prompt: string, timeoutMs = 20000, customType = "wiki-init-prompt"): Promise<string> {
-  const id = `wiki-${customType}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      pendingPrompts.delete(id);
-      reject(new Error("LLM prompt timed out"));
-    }, timeoutMs);
-    pendingPrompts.set(id, { resolve, reject, timeout });
-    getApi().pi.sendMessage(
-      {
-        customType,
-        content: prompt,
-        display: false,
-      },
-      { triggerTurn: true, deliverAs: "followUp" },
-    );
-  });
-}
-
 export default function (pi: ExtensionAPI) {
   // WIKI_DEBUG_LOG=1: hermetic e2e seam — append every tool execution to
   // <cwd>/.wiki-debug.log so probes can be scored on BEHAVIOR (map-first vs
@@ -2227,27 +2255,6 @@ export default function (pi: ExtensionAPI) {
 
   _api = pi;
 
-  // --- message_end: capture LLM responses for pending prompts ---
-  pi.on("message_end", async (event, _ctx) => {
-    // ponytail: skip processing if no pending init prompts
-    if (pendingPrompts.size === 0) return;
-    if (event.message.role !== "assistant") return;
-    const text = (event.message.content as Array<{ type: string; text?: string }> | undefined)
-      ?.filter((b) => b.type === "text")
-      .map((b) => b.text ?? "")
-      .join("")
-      .trim();
-    if (!text) return;
-
-    const first = pendingPrompts.entries().next();
-    if (!first.done) {
-      const [, entry] = first.value;
-      clearTimeout(entry.timeout);
-      entry.resolve(text);
-      pendingPrompts.delete(first.value[0]);
-    }
-  });
-
   // --- session_start: ensure bundle, run staleness check, ask to update ---
   pi.on("session_start", async (_event, ctx) => {
     // ctx is used after awaits below (initBundle, staleness confirm dialog that
@@ -2288,8 +2295,9 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       try {
-        await initBundle(cwd);
-        ctx.ui.notify("Created docs/wiki/ stub bundle. Run /wiki:init to re-scaffold.", "info");
+        const res = await initBundle(cwd);
+        ctx.ui.notify("docs/wiki/ stub bundle created.", "info");
+        fireAutoDoc(cwd, ctx, res.autoDocNeeded);
       } catch (e) {
         ctx.ui.notify(`wiki init failed: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
@@ -3219,9 +3227,10 @@ export default function (pi: ExtensionAPI) {
           const ok = ctx.hasUI ? await ctx.ui.confirm("Wiki exists", "docs/wiki/ already exists. Add missing scaffold files? Existing content is never overwritten.") : false;
           if (!ok) return;
         }
-        await initBundle(ctx.cwd);
+        const res = await initBundle(ctx.cwd);
         // Explicit init also upgrades a legacy bundle schema (F2).
         try { await migrateBundle(ctx.cwd); } catch { /* best effort */ }
+        fireAutoDoc(ctx.cwd, ctx, res.autoDocNeeded);
         // R7 bootstrap import: offer ADR → Concept pages (ask-first, UI only).
         if (ctx.hasUI && ctx.mode !== "rpc") {
           try {
