@@ -12,7 +12,7 @@ timestamp: "2026-11-16T09:19:20.914Z"
 
 Original finding (pre-fix): `initBundle()` (`/wiki:init` handler) unconditionally `writeFile`'d `index.md`, `overview.md`, `log.md`, `last_updated.md`, `glossary.md`, and the `pages/**/index.md` scaffolds. Only `.wiki_ignore` was guarded by `existsSync`. The confirm dialog promised "will not overwrite existing concept files" — that was true **only for `pages/``; any authored overview/glossary content was wiped by a re-init.
 
-The fix followed the direction agreed in the update-propagation decision: turn `initBundle` into an **ensureBundle**-style pass — every write guarded by `existsSync`, only *add missing surfaces*, regenerate only the auto-managed nav-map section between markers. `ensureBundle()` semantics double as migration step zero (fresh init and old-bundle catch-up share one code path) — the foundation F2's `okf_version` migration layer (see [[okf-version-frontmatter-is-stamped-at-scaffold-but-never-con]] and [[bundle-migrations-are-additive-only-idempotent-and-always-as]]) builds on.
+The fix followed the direction agreed in the update-propagation decision: turn `initBundle` into an **ensureBundle**-style pass — every write guarded by `existsSync`, only *add missing surfaces*, regenerate only the auto-managed nav-map section between markers. `ensureBundle()` semantics double as migration step zero (fresh init and old-bundle catch-up share one code path) — the foundation F2's `okf_version` migration layer (see [[okf-version-never-checked]] and [[migrations-additive-ask-first]]) builds on.
 
 ## Source
 

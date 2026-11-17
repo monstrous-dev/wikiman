@@ -3,12 +3,22 @@
 All notable changes to wikiman. Releases are git tags; pin one with
 `pi install git:github.com/monstrous-dev/wikiman@vX.Y.Z`.
 
-## Unreleased
+## v0.2.1 — everything in the background
 
+- **Staleness sync never interrupts you** — the blocking "Update via
+  wiki-curator?" dialog is gone. With the subagent runner installed the
+  curator spawns as a background child (footer: `● updating (background)`,
+  completion notify); without it the sync queues as a hidden message that
+  rides your next prompt (footer: `● stale — sync queued`), and
+  `wiki_mark_synced` flips the footer to `● synced` when it lands.
 - **`/wiki:self-update`** — update the extension itself from inside pi:
   ask-first, runs `pi update git:github.com/monstrous-dev/wikiman`, then
-  reminds you to `/reload`. The update-available notification now points at
-  it too.
+  reminds you to `/reload`. The update-available notification points at it.
+- **Init returns instantly** — scaffolding a new wiki no longer blocks the
+  session on a hidden LLM turn. The scaffold lands immediately and the
+  auto-doc (overview/glossary/file-tree descriptions) runs in the background:
+  a wiki-curator subagent window when agentman is present, an invisible
+  in-process completion otherwise. Dead askLLM machinery removed.
 
 ## v0.2.0 — the self-contained release
 

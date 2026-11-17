@@ -4,7 +4,7 @@ title: "Acceptance bar redefined: OKF wiki as a native LLM skill, 9/10 rubric on
 description: Context
 tags: [quality-bar, gauntlet, acceptance-criteria, native-skill, e2e-testing, roadmap]
 status: accepted
-supersedes: decisions/gauntlet-acceptance-bar-9-10-llm-memory-with-self-learning-v
+supersedes: decisions/gauntlet-bar-llm-memory-e2e
 timestamp: "2026-11-16T09:30:31.431Z"
 ---
 
@@ -12,7 +12,7 @@ timestamp: "2026-11-16T09:30:31.431Z"
 
 ## Context
 
-The prior gauntlet bar ([[gauntlet-acceptance-bar-9-10-llm-memory-with-self-learning-v]]) framed "done" as three quality pillars: LLM memory, self-learning, knows-when-to-use. The user then redefined the bar in behavioral terms: **the wiki operates in OKF, and using it must be a native skill of the LLM** — judged from real session transcripts, not from descriptions.
+The prior gauntlet bar ([[gauntlet-bar-llm-memory-e2e]]) framed "done" as three quality pillars: LLM memory, self-learning, knows-when-to-use. The user then redefined the bar in behavioral terms: **the wiki operates in OKF, and using it must be a native skill of the LLM** — judged from real session transcripts, not from descriptions.
 
 The assistant distilled this into a gauntlet prompt (gauntlet-loop method) for finishing wikiman at `C:\Users\PTW\.pi\agent\extensions\wiki-context` against the handover roadmap (`C:\Users\PTW\Desktop\wikiman-improvement-handover.md` + docs/wiki).
 

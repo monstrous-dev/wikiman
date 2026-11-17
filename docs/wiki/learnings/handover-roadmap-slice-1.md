@@ -8,7 +8,7 @@ timestamp: "2026-11-16T09:18:24.185Z"
 
 # Handover roadmap: R1 + F1 + curator slice done (ec1034a) — next is R2 journal
 
-> **Status moved on (2026-11-16T09:19Z):** the current roadmap snapshot is [[handover-roadmap-status-1-of-11-items-done-next-slice-is-r1-]] — 4 of ~11 done, next slice F2 + R2 (R2 now gated on F2's migration layer). This note keeps the slice's commit/rollback and verification details.
+> **Status moved on (2026-11-16T09:19Z):** the current roadmap snapshot is [[handover-roadmap-slice-2]] — 4 of ~11 done, next slice F2 + R2 (R2 now gated on F2's migration layer). This note keeps the slice's commit/rollback and verification details.
 
 The **R1 + F1 + curator-inlining slice is done** — commit `ec1034a` (2026-11-16),
 on top of restore-point commit `41d6d93` / tag `restore-pre-r1`

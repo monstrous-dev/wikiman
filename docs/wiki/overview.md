@@ -25,13 +25,22 @@ structured recording tools (`wiki_note_learning` / `_rule` / `_decision` /
 `_preference` / `_page`), hygiene tools (`wiki_validate`, `wiki_timestamp`,
 `wiki_changelog`, `wiki_mark_synced`), staleness detection comparing code
 changes against `docs/wiki/last_updated.md` (git-first, mtime fallback,
-respecting `.wiki_ignore` plus built-in framework ignores), and five commands:
-`/wiki` (viewer), `/wiki:update`, `/wiki:init`, plus `/wiki:disconnect` /
-`/wiki:reconnect` — pausing the extension's proactive machinery (injection,
+respecting `.wiki_ignore` plus built-in framework ignores), and six commands:
+`/wiki` (viewer), `/wiki:update`, `/wiki:init`, `/wiki:self-update`
+(ask-first in-app extension update via `pi update`, then a `/reload`
+reminder; the update-available notification points here), plus
+`/wiki:disconnect` / `/wiki:reconnect` — pausing the extension's proactive machinery (injection,
 staleness, recap, curator) for a folder without deleting its `docs/wiki/`
 bundle (state in `~/.pi/agent/.wiki-disconnected.json`). `viewer.ts` is a
 standalone module that generates a self-contained HTML viewer for the whole
-bundle (`wiki-viewer.html` / `wiki.js` data) and serves it on localhost.
+bundle (`wiki-viewer.html` / `wiki.js` data) and serves it on localhost,
+with client-side page filtering (a sidebar search box narrows the tree).
+Releases are git tags documented in `CHANGELOG.md` (pin one with
+`pi install git:github.com/monstrous-dev/wikiman@vX.Y.Z`), and `tests/`
+holds the e2e gauntlet harness: `run-probe.mjs` (headless probe runner with
+per-run debug-log hygiene and cmd.exe-safe prompt quoting),
+`ground-truth.md`, `rubric.md`, and the `fixture/` generator that builds
+the acme-ops fixture.
 
 Supporting assets ship alongside the code: the end-of-turn **recap is
 self-contained** — one in-process completion call (hamster-pattern

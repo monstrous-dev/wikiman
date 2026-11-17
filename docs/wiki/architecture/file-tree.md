@@ -2,10 +2,10 @@
 type: Artifact
 title: File tree
 description: Complete project file listing with per-file descriptions.
-timestamp: "2026-11-16T08:40:12.625Z"
+timestamp: "2026-11-16T14:30:52.197Z"
 ---
 
-# File tree — generated 2026-11-16T08:40:12.625Z
+# File tree — generated 2026-11-16T14:30:52.197Z
 # Respects .wiki_ignore exclusions.
 # [description] — shorthand summary of each file's function
 
@@ -21,6 +21,12 @@ timestamp: "2026-11-16T08:40:12.625Z"
 ├── skills/ [Skills shipped with the pi package]
 │   └── wikiman/ [The wikiman skill folder]
 │       └── SKILL.md [Wiki-first lookup order + recording taxonomy instructions for the LLM]
+├── tests/ [E2E gauntlet harness (dev-local)]
+│   ├── fixture/ [generate.mjs — builds the acme-ops fixture at C:\Users\PTW\wikiman-e2e\acme-ops]
+│   ├── ground-truth.md [Ground-truth rubric incl. planted-trap readings (DLQ = trap #3, unwired)]
+│   ├── rubric.md [Blind-critic scoring rubric for probe transcripts]
+│   └── run-probe.mjs [Headless probe runner (pi -p) — per-run debug-log clearing, cmd.exe-safe quoting]
+├── CHANGELOG.md [Release log — git-tagged releases, pin via pi install @vX.Y.Z]
 ├── .gitignore [Git exclusions for local dev artifacts]
 ├── .wiki_ignore [Patterns excluded from staleness detection (wiki self-edits, build dirs)]
 ├── index.ts [The entire extension — context injection, wiki tools, staleness check, /wiki commands]

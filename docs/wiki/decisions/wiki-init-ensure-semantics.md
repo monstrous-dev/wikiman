@@ -14,9 +14,9 @@ timestamp: "2026-11-16T09:18:24.185Z"
 `initBundle()` (the `/wiki:init` handler) unconditionally rewrote `index.md`,
 `overview.md`, `log.md`, `last_updated.md`, `glossary.md` and the `pages/**`
 scaffolds — destroying authored content on an existing bundle (documented in
-[[wiki-init-on-an-existing-bundle-destroys-authored-content-on]]; only `pages/`
+[[wiki-init-data-loss]]; only `pages/`
 was guarded). The fix direction was pre-agreed in
-[[update-propagation-okf-version-gated-additive-bundle-migrati]] as F1.
+[[update-propagation-okf-migrations]] as F1.
 
 ## Choice
 

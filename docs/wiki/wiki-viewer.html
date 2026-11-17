@@ -183,6 +183,9 @@
         <span>Wiki Pages</span>
         <span class="sidebar-toggle-label" id="closeSidebarBtn">&#215; close</span>
       </div>
+      <div style="padding:8px 10px;border-bottom:1px solid var(--sidebar-border);flex-shrink:0;">
+        <input id="wikiSearch" type="search" placeholder="Filter pages…" autocomplete="off" style="width:100%;box-sizing:border-box;padding:6px 8px;border-radius:6px;border:1px solid var(--sidebar-border);background:transparent;color:inherit;font-size:13px;">
+      </div>
       <div class="sidebar-scroll" id="sidebarScroll"></div>
     </nav>
 
@@ -206,10 +209,10 @@ var WIKI_CONTENT = {
 type: Artifact
 title: File tree
 description: Complete project file listing with per-file descriptions.
-timestamp: "2026-11-16T08:40:12.625Z"
+timestamp: "2026-11-16T14:30:52.197Z"
 ---
 
-# File tree — generated 2026-11-16T08:40:12.625Z
+# File tree — generated 2026-11-16T14:30:52.197Z
 # Respects .wiki_ignore exclusions.
 # [description] — shorthand summary of each file's function
 
@@ -225,6 +228,12 @@ timestamp: "2026-11-16T08:40:12.625Z"
 ├── skills/ [Skills shipped with the pi package]
 │   └── wikiman/ [The wikiman skill folder]
 │       └── SKILL.md [Wiki-first lookup order + recording taxonomy instructions for the LLM]
+├── tests/ [E2E gauntlet harness (dev-local)]
+│   ├── fixture/ [generate.mjs — builds the acme-ops fixture at C:\\Users\\PTW\\wikiman-e2e\\acme-ops]
+│   ├── ground-truth.md [Ground-truth rubric incl. planted-trap readings (DLQ = trap #3, unwired)]
+│   ├── rubric.md [Blind-critic scoring rubric for probe transcripts]
+│   └── run-probe.mjs [Headless probe runner (pi -p) — per-run debug-log clearing, cmd.exe-safe quoting]
+├── CHANGELOG.md [Release log — git-tagged releases, pin via pi install @vX.Y.Z]
 ├── .gitignore [Git exclusions for local dev artifacts]
 ├── .wiki_ignore [Patterns excluded from staleness detection (wiki self-edits, build dirs)]
 ├── index.ts [The entire extension — context injection, wiki tools, staleness check, /wiki commands]
@@ -234,7 +243,52 @@ timestamp: "2026-11-16T08:40:12.625Z"
 ├── README.md [Project README — features, install, how it works, security]
 └── viewer.ts [Generates the self-contained HTML wiki viewer and serves it on localhost]
 `,
-  "decisions/disconnect-reconnect-state-lives-in-agent-home-keyed-per-cwd.md": `---
+  "decisions/acceptance-bar-native-skill.md": `---
+type: Decision
+title: "Acceptance bar redefined: OKF wiki as a native LLM skill, 9/10 rubric on real transcripts"
+description: Context
+tags: [quality-bar, gauntlet, acceptance-criteria, native-skill, e2e-testing, roadmap]
+status: accepted
+supersedes: decisions/gauntlet-bar-llm-memory-e2e
+timestamp: "2026-11-16T09:30:31.431Z"
+---
+
+# Acceptance bar redefined: OKF wiki as a native LLM skill, 9/10 rubric on real transcripts
+
+## Context
+
+The prior gauntlet bar ([[gauntlet-bar-llm-memory-e2e]]) framed "done" as three quality pillars: LLM memory, self-learning, knows-when-to-use. The user then redefined the bar in behavioral terms: **the wiki operates in OKF, and using it must be a native skill of the LLM** — judged from real session transcripts, not from descriptions.
+
+The assistant distilled this into a gauntlet prompt (gauntlet-loop method) for finishing wikiman at \`C:\\Users\\PTW\\.pi\\agent\\extensions\\wiki-context\` against the handover roadmap (\`C:\\Users\\PTW\\Desktop\\wikiman-improvement-handover.md\` + docs/wiki).
+
+## The choice
+
+**The bar**: a fresh-session transcript on a real project where —
+1. The **operating contract, overview, and index are always in context** (instructions for how to operate the wiki present at all times);
+2. **Where-is-X is answered from the map before any grep** (wayfinding/navigation as a native skill);
+3. Concepts are **lazy-loaded one at a time** and the agent **progressively discloses only what the task needs**;
+4. **Just-in-time instructions arrive exactly when relevant**.
+
+**The protocol**: smallest judgeable pieces; builder + separate critic with fresh context; the critic runs real sessions, puts the transcript next to the bar blind, names the single biggest remaining gap, and loops back to the builder.
+
+**The measurable half**: a 10-point rubric per session covering contract presence, map-first wayfinding, lazy-load discipline, progressive disclosure, and JIT timing. **9/10 or better wins**; praise is not useful — the critic is harsh. Builders and critics run as parallel subagents. A live progress page updates as work evolves.
+
+## Alternatives considered
+
+- Keep the prior three-pillar bar (memory / self-learning / knows-when-to-use). Superseded: pillars describe *outcomes*, but the new bar specifies *observable session behaviors* — contract presence, map-first lookup, lazy-load discipline, progressive disclosure, JIT timing — which a critic can score directly from a transcript.
+- Score against a description of quality. Rejected: the bar is explicitly "compare transcripts against the bar itself, not against a description of it".
+
+## Rationale
+
+Behavioral criteria are judgeable from real transcripts; quality pillars are not. The redefinition keeps the gauntlet structure (real bar + separate critic + e2e runs) but makes the target concrete enough for a blind critic to grade.
+
+## Consequences
+
+- Supersedes the three-pillar formulation; all remaining roadmap work (F2 okf_version migrations, R2 session journal, R3 ranked token-budgeted injection, R4 git-aware injection, R5 ranked search, R6 dedupe/governors, R7 /wiki:digest /wiki:stats viewer search, R8 global memory tier, ask-first update check, e2e test suite) is now driven as gauntlet rounds against the native-skill rubric.
+- R3/R5 (ranked, token-budgeted injection and search) directly serve contract-presence and progressive-disclosure criteria; R2 (session journal) serves JIT timing.
+- Exit criterion for the whole project: a critic-scored 9/10 fresh-session transcript, not item counts on the roadmap.
+`,
+  "decisions/disconnect-state-agent-home.md": `---
 type: Decision
 title: Disconnect/reconnect state lives in agent home, keyed per cwd
 description: Context
@@ -279,12 +333,135 @@ Consistency with the two existing registries in agent home, and correct default 
 
 - \`index.ts\` — \`DISCONNECTED_FILE\`, \`loadDisconnected\` / \`saveDisconnected\` / \`isDisconnected\`, and the five guard sites
 `,
+  "decisions/gauntlet-bar-llm-memory-e2e.md": `---
+type: Decision
+title: "Gauntlet acceptance bar: 9/10 LLM memory with self-learning, verified e2e"
+description: Context
+tags: [quality-bar, gauntlet, acceptance-criteria, e2e-testing, roadmap, self-learning]
+status: accepted
+supersedes: "[]"
+timestamp: "2026-11-16T09:25:00.822Z"
+---
+
+# Gauntlet acceptance bar: 9/10 LLM memory with self-learning, verified e2e
+
+## Context
+
+After the R1 + F1 + curator slice landed ([[recap-runs-in-process-not-via-agentman-subagent]], commit \`ec1034a\`), the roadmap status ([[handover-roadmap-slice-2]]) showed 4 of ~11 items done and named F2 + R2 as the next slice. The user then set an explicit, measurable acceptance bar for ALL remaining work, invoking the gauntlet-loop method:
+
+> build all improvements and test the extension e2e until the wiki/extension is **9 out of 10 for LLM memory**, has **self-learning**, and **knows when to use** (records the right thing at the right moment).
+
+## The choice
+
+The remaining roadmap (F2 migration layer, R2 session journal, R3–R8) is no longer "ship slices and self-assess quality". Every improvement is driven as a gauntlet:
+
+1. **Concrete bar** — quality is judged against a real, fetchable reference (a working wiki that demonstrably captures the right knowledge, verified e2e in a live session), not against a self-description of quality.
+2. **Builder + separate critic** — the agent that builds a piece is not the one that judges it; the critic compares output blind against the bar and names the single biggest remaining gap.
+3. **Loop until the bar is met** — exit is "critic picks ours" / the 9/10 bar demonstrably reached, never a round count or a "looks good to me".
+4. **E2E verification is a hard gate** — per the house gotcha ([[new-commands-need-reload]]), static checks (tsc baseline diff) are necessary but not sufficient; features are only "done" after runtime verification in a fresh session.
+
+## Alternatives considered
+
+- **Continue ad-hoc slice-by-slice with self-assessed quality** (the previous mode). Rejected: self-assessment drifts upward; the existing roadmap learnings already flagged "pending runtime verification" items that nobody had actually run.
+- **Define the bar as a rubric/scorecard doc only**. Rejected as insufficient alone: a rubric without a separate critic and e2e runs still lets the builder grade its own homework.
+
+## Rationale
+
+"9 out of 10 for LLM memory" only means something if some agent can actually observe the extension failing or succeeding at capturing the right knowledge in real sessions. The gauntlet structure (real bar + separate critic + e2e) is the only approach in play that produces that evidence.
+
+## Consequences
+
+- The three pillars define "done" for the whole backlog: (1) **LLM memory quality** — the wiki captures what future sessions actually need, (2) **self-learning** — capture happens automatically and correctly without prompting, (3) **knows when to use** — injection/staleness/recap fire at the right moments, not nagging or silent.
+- The recap e2e run flagged in the roadmap learning's "Pending runtime verification" section is now a blocking gate, not a nice-to-have.
+- Each gauntlet round should still land as a reviewable slice/commit so rollback points (cf. \`restore-pre-r1\`) survive.
+- Status updates to [[handover-roadmap-slice-2]] should report progress against the bar, not just item counts.
+`,
   "decisions/index.md": `# Decisions
 
-- [Update propagation: okf_version-gated additive bundle migrations + prompt-in-package](./update-propagation-okf-version-gated-additive-bundle-migrati.md) - Context
-- [Disconnect/reconnect state lives in agent home, keyed per cwd](./disconnect-reconnect-state-lives-in-agent-home-keyed-per-cwd.md) - Context
+- [Update propagation: okf_version-gated additive bundle migrations + prompt-in-package](./update-propagation-okf-migrations.md) - Context
+- [Disconnect/reconnect state lives in agent home, keyed per cwd](./disconnect-state-agent-home.md) - Context
+- [Recap runs in-process, not via agentman subagent](./recap-runs-in-process-not-via-agentman-subagent.md) - Context
+tes-authored-cont.md) - Context
+- [Gauntlet acceptance bar: 9/10 LLM memory with self-learning, verified e2e](./gauntlet-bar-llm-memory-e2e.md) - Context
+- [Acceptance bar redefined: OKF wiki as a native LLM skill, 9/10 rubric on real transcripts](./acceptance-bar-native-skill.md) - Context
+- [R3 nav injection replaces grep-first exploration](./r3-nav-injection-replaces-grep-first-exploration.md) - \`buildInjection\` now emits a ranked nav slice under a budget plus a hard imperative operating contract: consult the wiki map first, grep only as fallback when t
 `,
-  "decisions/update-propagation-okf-version-gated-additive-bundle-migrati.md": `---
+  "decisions/r3-nav-injection-replaces-grep-first-exploration.md": `---
+type: Decision
+title: R3 nav injection replaces grep-first exploration
+description: "\`buildInjection\` now emits a ranked nav slice under a budget plus a hard imperative operating contract: consult the wiki map first, grep only as fallback when t"
+tags: [pi-extension, injection, wiki]
+timestamp: "2026-11-16T10:24:49.319Z"
+---
+
+# R3 nav injection replaces grep-first exploration
+
+\`buildInjection\` now emits a ranked nav slice under a budget plus a hard imperative operating contract: consult the wiki map first, grep only as fallback when the wiki doesn't name the mount point. Acceptance probe: first tool call flipped from \`bash ls\` + ~2min of grep to \`wiki_get\`, total 68s vs baseline 179–208s.
+`,
+  "decisions/recap-runs-in-process-not-via-agentman-subagent.md": `---
+type: Decision
+title: Recap runs in-process, not via agentman subagent
+description: Context
+tags: [recap, architecture, agentman, graceful-degradation]
+status: accepted
+timestamp: "2026-11-16T09:18:24.184Z"
+---
+
+# Recap runs in-process, not via agentman subagent
+
+## Context
+
+The end-of-turn recap originally spawned an agentman subagent (\`agents/wiki-recap.md\`
+prompt). That made the flagship recap a silent no-op on fresh installs: without
+agentman — or without the copied prompt in \`~/.pi/agent/agents/\` — no recap ever
+ran. Handover item R1 called for inlining it.
+
+## Choice
+
+\`runInlineRecap()\` in \`index.ts\` replaces the subagent spawn:
+
+- One \`modelRegistry.complete()\` call (hamster pattern), 45 s timeout, \`randomUUID\`
+  sessionId, recap prompt shipped in-package.
+- \`parseRecapNotes()\` extracts JSON fence/prose-tolerantly, drops unknown note types
+  and empty fields, and **never trusts LLM-authored file paths**.
+- Validated notes flow through the same \`noteInto\`/\`notePage\` funnel the
+  \`wiki_note_*\` tools use — frontmatter, slug collisions, indexes, memory.md all
+  handled identically.
+- **Silent degradation** with no model/auth; 2-attempt error-adaptive retry;
+  per-note try/catch so one bad note can't kill the batch.
+- Debounce/suppress machinery untouched (handover requirement).
+
+## Alternatives considered
+
+- Keep the agentman subagent — rejected: hard dependency; fresh installs get
+  nothing.
+- Let the LLM write files directly from its reply — rejected: bypasses the
+  frontmatter/slug/index/memory handling and trusts LLM-authored paths.
+
+## Rationale
+
+Self-contained means the wiki is self-maintaining on every install, not just ones
+with agentman; one validated write funnel for everything entering \`docs/wiki/\`.
+
+## Consequences (why the code looks this way)
+
+- The debounced timer carries a \`.catch\` — a timer firing during session teardown
+  must never crash the session (the session-kill gotcha).
+- The model reference is captured **synchronously** in \`agent_end\` before the timer
+  is scheduled — async context may be gone by the time it fires.
+- Related slice change: \`spawnWikiAgent\` gained a \`fallbackSteer\` — \`/wiki:update\`
+  and staleness prompts fall back to an **in-session update** with house rules
+  baked into the steer prompt when agentman or the prompt copy is absent; the
+  staleness delegation prompt adapts to delegate-tool absence. Same
+  degrade-gracefully philosophy as the recap.
+
+## Status
+
+Accepted. Implemented in commit \`ec1034a\` (2026-11-16), on top of restore point
+\`41d6d93\` / tag \`restore-pre-r1\`. Runtime testing still pending (fresh session or
+\`/reload\`).
+`,
+  "decisions/update-propagation-okf-migrations.md": `---
 type: Decision
 title: "Update propagation: okf_version-gated additive bundle migrations + prompt-in-package"
 description: Context
@@ -327,6 +504,56 @@ For **C**: remove the instance — inline prompts in-package (prompt-in-package)
 - The migration layer is a prerequisite for R2 (journal) reaching existing bundles.
 - First recommended slice: R1 (inline recap) + ensureBundle + curator prompt-inlining — shared machinery (in-process completion, prompt-in-package, deterministic writer) makes the extension genuinely self-contained.
 `,
+  "decisions/wiki-init-ensure-semantics.md": `---
+type: Decision
+title: "Wiki:init is ensure-semantics — never overwrites authored content"
+description: Context
+tags: [wiki-init, idempotency, data-safety, f1]
+status: accepted
+timestamp: "2026-11-16T09:18:24.185Z"
+---
+
+# Wiki:init is ensure-semantics — never overwrites authored content
+
+## Context
+
+\`initBundle()\` (the \`/wiki:init\` handler) unconditionally rewrote \`index.md\`,
+\`overview.md\`, \`log.md\`, \`last_updated.md\`, \`glossary.md\` and the \`pages/**\`
+scaffolds — destroying authored content on an existing bundle (documented in
+[[wiki-init-data-loss]]; only \`pages/\`
+was guarded). The fix direction was pre-agreed in
+[[update-propagation-okf-migrations]] as F1.
+
+## Choice
+
+Implemented as **ensure-semantics** (commit \`ec1034a\`):
+
+- Every stub write goes through \`writeIfMissing\` (given a pass-through \`enc\` param
+  so batched stub edits become unique prefix swaps).
+- The auto-doc LLM pass (which rewrites overview etc.) runs **only on a fresh
+  bundle** — its rewrites stay real writes there.
+- \`last_updated.md\` is never reset by init.
+- The confirm dialog now tells the truth about what init does on an existing bundle.
+
+## Alternatives considered
+
+- Keep destructive init behind louder warnings — rejected: data loss is
+  unrecoverable and users don't read warnings.
+- Extend the old per-file guard — rejected: guards rot; existence-based
+  ensure-semantics cannot clobber by construction.
+
+## Rationale
+
+Init must be idempotent and safe to run anywhere: on an existing bundle it fills
+gaps; on a fresh one it scaffolds and auto-docs. Re-running should never destroy.
+
+## Status
+
+Accepted, shipped. Note: the full \`ensureBundle()\` migration-step-zero unification
+from the update-propagation decision (fresh init and old-bundle catch-up sharing
+one code path, \`okf_version\`-gated migrations) is **still pending** — that's the F2
+migration layer the R2 journal work will need.
+`,
   "glossary.md": `---
 type: Glossary
 title: Glossary
@@ -353,7 +580,7 @@ timestamp: "2026-11-16T08:40:12.625Z"
 | Agentman | Companion package (\`monstrous-dev/agentman\`) providing the sub-agent runner the recap/curator agents require. |
 `,
   "index.md": `---
-okf_version: "0.1"
+okf_version: "0.2"
 ---
 
 # Project Knowledge Wiki
@@ -361,7 +588,7 @@ okf_version: "0.1"
 <!-- wiki-nav:start -->
 ## Navigation map
 
-Auto-generated detailed index of every docs/wiki/ concept — the map the LLM uses to locate information. 8 concept(s). Regenerated on init and on wiki_mark_synced. Generated 2026-11-16T08:51:10.688Z.
+Auto-generated detailed index of every docs/wiki/ concept — the map the LLM uses to locate information. 48 concept(s). Regenerated on init and on wiki_mark_synced. Generated 2026-11-16T14:35:36.707Z.
 
 Each entry: [title](concept-id.md) — description. Links are clickable in /wiki; pass the concept-id (link target minus .md) to wiki_get.
 
@@ -376,20 +603,60 @@ Each entry: [title](concept-id.md) — description. Links are clickable in /wiki
 
 ### Pages
 
+- [Session journal / resume card (R2)](pages/artifacts/session-journal-resume-card-r2.md) — Completion call now returns notes + journal in one shot; entries in \`journal/2026-11.md\` with \`attempted\`/\`landed\`/\`open\` fields (empty fields omitted, journal
+- [wikiman-e2e harness and acme-ops fixture](pages/artifacts/wikiman-e2e-harness-and-acme-ops-fixture.md) — E2E test setup at \`C:\\Users\\PTW\\wikiman-e2e\\\`: \`acme-ops\` fixture (58 files, 4 git commits, legacy \`okf_version 0.1\` bundle, planted traps incl. ratelimit-unmou
+- [Bundle migration engine (F2)](pages/entities/bundle-migration-engine-f2.md) — Shipped F2: versioned bundle migration via \`BUNDLE_VERSION="0.2"\` with \`readBundleVersion\`/\`migrateBundle\`/\`bumpBundleVersion\`, wired into \`session_start\` and \`
+- [Inline Recap Pipeline](pages/entities/inline-recap-pipeline.md) — The end-of-turn recap subsystem of \`index.ts\`: after each coding turn, one
+- [R3 injection contract rework (planned)](pages/entities/r3-injection-contract-rework-planned.md) — Next planned work: hard imperative operating contract at the top of every injection ("the map is already in your context — consult it FIRST; grep/find is the fa
+- [/wiki:self-update command](pages/entities/wiki-self-update-command.md) — New extension command that performs the update loop in-app: ask-first TUI confirm, runs \`pi update git:github.com/monstrous-dev/wikiman\` (3-minute timeout), res
 - [Page Templates](pages/TEMPLATES.md) — Reference templates for Concept, Entity, and Artifact pages. Follow these when using wiki_note_page.
 
 ### Decisions
 
-- [Update propagation: okf_version-gated additive bundle migrations + prompt-in-package](decisions/update-propagation-okf-version-gated-additive-bundle-migrati.md) — Context
+- [Acceptance bar redefined: OKF wiki as a native LLM skill, 9/10 rubric on real transcripts](decisions/acceptance-bar-native-skill.md) — Context
+- [Disconnect/reconnect state lives in agent home, keyed per cwd](decisions/disconnect-state-agent-home.md) — Context
+- [Gauntlet acceptance bar: 9/10 LLM memory with self-learning, verified e2e](decisions/gauntlet-bar-llm-memory-e2e.md) — Context
+- [R3 nav injection replaces grep-first exploration](decisions/r3-nav-injection-replaces-grep-first-exploration.md) — \`buildInjection\` now emits a ranked nav slice under a budget plus a hard imperative operating contract: consult the wiki map first, grep only as fallback when t
+- [Recap runs in-process, not via agentman subagent](decisions/recap-runs-in-process-not-via-agentman-subagent.md) — Context
+- [Update propagation: okf_version-gated additive bundle migrations + prompt-in-package](decisions/update-propagation-okf-migrations.md) — Context
+- [Wiki:init is ensure-semantics — never overwrites authored content](decisions/wiki-init-ensure-semantics.md) — Context
 
 ### Rules
 
-- [Bundle migrations are additive-only, idempotent, and always ask-first](rules/bundle-migrations-are-additive-only-idempotent-and-always-as.md) — **Guideline**: Any new docs/wiki/ bundle surface or feature must ship as an **additive-only, idempotent migration step** keyed on a bump of the bundle's \`okf_ve
+- [Exact-title duplicates rejected at the funnel level](rules/exact-title-dedupe-funnel.md) — \`wiki_note_*\` calls with an exact duplicate title return "Already recorded — id — reference as [[wikilink]]" instead of writing. Always reference existing notes
+- [Auto-generated files in docs/wiki/ must be validator-invisible](rules/generated-files-validator-invisible.md) — Journal \`.md\` files without frontmatter tripped validator E1, and \`wiki_mark_synced\` refuses while errors exist — so agents burned tool calls fabricating frontm
+- [Match the task, not the recency (contract rule 5)](rules/match-the-task-not-the-recency-contract-rule-5.md) — Probe agents should open exactly the concepts named by the task, not chase recently-viewed files. Enforcing this halved session durations (S2 116→54s, S4 158→66
+- [Migration prompts: ask in UI, silent headless](rules/migration-prompts-ask-in-ui-silent-headless.md) — Bundle version migration prompts ask-first in the real UI but migrate silently in headless/RPC sessions, with per-cwd + per-version decline memory. Verified via
+- [Bundle migrations are additive-only, idempotent, and always ask-first](rules/migrations-additive-ask-first.md) — **Guideline**: Any new docs/wiki/ bundle surface or feature must ship as an **additive-only, idempotent migration step** keyed on a bump of the bundle's \`okf_ve
 
 ### Learnings
 
-- [okf_version frontmatter is stamped at scaffold but never consumed](learnings/okf-version-frontmatter-is-stamped-at-scaffold-but-never-con.md) — \`indexFrontmatter()\` stamps \`okf_version: "0.1"\` into a bundle's root \`index.md\` at scaffold time (index.ts ~line 1232), but **nothing ever reads it** — there i
-- [/wiki:init on an existing bundle destroys authored content (only pages/ is guarded)](learnings/wiki-init-on-an-existing-bundle-destroys-authored-content-on.md) — \`initBundle()\` (index.ts, \`/wiki:init\` handler) unconditionally \`writeFile\`s \`index.md\`, \`overview.md\`, \`log.md\`, \`last_updated.md\`, \`glossary.md\`, and the \`pag
+- [Background-sync 'synced' footer state is an approximation](learnings/background-sync-footer-approximate.md) — \`wiki: ● synced (background)\` shows on completion notify even if the curator partially failed; correctness is restored lazily because the next session's stalene
+- [Background wiki sync fallback: hidden queued message with 1h cooldown](learnings/background-wiki-sync-fallback.md) — When no subagent runner (agentman) is available, the stale-wiki sync queues as a hidden message that silently rides the user's next prompt. A 1h cooldown preven
+- [Baseline: wikiman answers are correct but behavior is grep-first (map-first 0/2)](learnings/baseline-grep-first.md) — E2E baseline probes P1 and P3 both passed ground truth (caught the orphaned-middleware trap, picked the right file over the twin). But debug logs show the agent
+- [Debounce timer dies when pi -p exits (headless recap race)](learnings/debounce-dies-headless-race.md) — The journal/recap write used a 1.2s debounce timer, which is killed when \`pi -p\` exits — the journal silently never landed in headless mode. Fix: in headless ha
+- [Extensions load at session start only](learnings/extensions-load-at-session-start-only.md) — pi extensions cannot hot-reload their own code: after a self-update the running session still executes the old version until \`/reload\` is issued or pi restarts.
+- [Fixture DLQ is genuinely unwired; ground truth must bless code-truthful readings](learnings/fixture-dlq-unwired.md) — The planted DLQ trap in the e2e fixture has no producer — the S6 agent's 'contrarian' claim that it was unwired was code-accurate. The ground-truth rubric was c
+- [Handover roadmap: R1 + F1 + curator slice done (ec1034a) — next is R2 journal](learnings/handover-roadmap-slice-1.md) — The **R1 + F1 + curator-inlining slice is done** — commit \`ec1034a\` (2026-11-16),
+- [Handover roadmap status: 4 of ~11 items done — next slice is F2 + R2](learnings/handover-roadmap-slice-2.md) — Second scorecard review: R1 (self-contained recap), F1 (init data-loss fix) and curator fallback are done; still open: F2, R2–R8, update check, tests. Next slice: F2 + R2.
+- [JIT git-audit relevance pattern (R4) verified in practice](learnings/jit-git-audit-r4.md) — The agent performed a single git-audit call (log + status + last-commit stat), then read exactly the 3 recently-touched files and \`wiki_get\`ed the 3 matching le
+- [Launching pi TUI QA windows on Windows](learnings/launching-pi-tui-qa-windows-on-windows.md) — To get a visible pi TUI session for QA on Windows, launch via \`wt -w new\` — a plain \`Start-Process\` of a \`.cmd\` lands in a hidden conhost. When multiple Windows
+- [Migration writes shouldn't trip staleness nag](learnings/migration-writes-shouldn-t-trip-staleness-nag.md) — After migrating, bump the bundle's \`last_updated\` so the migration's own writes don't trigger the staleness nag on next session.
+- [New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p](learnings/new-commands-need-reload.md) — Two gotchas when developing this pi extension (referenced as the "house gotcha" but never written down until now):
+- [okf_version frontmatter is stamped at scaffold but never consumed](learnings/okf-version-never-checked.md) — \`indexFrontmatter()\` stamps \`okf_version: "0.1"\` into a bundle's root \`index.md\` at scaffold time (index.ts ~line 1232), but **nothing ever reads it** — there i
+- [Probe tool logs accumulate across sessions without per-run clearing](learnings/probe-logs-need-per-run-clear.md) — In the wikiman-e2e gauntlet, round-1 \`.tools.log\` files accumulated across probe sessions, so blind critics grading S2/S3/S6 were partially reading S1's tool ca
+- [Recap dedupe gap: transcript must include wiki-tool evidence](learnings/recap-dedupe-tool-evidence.md) — \`collectTurnText\` originally captured only user/assistant text, so the recap could not see that a \`wiki_note_*\` call had already fired in-turn and wrote a parap
+- [regenerateMemory/updateIndexNavMap tolerate missing state](learnings/regenerate-tolerates-missing.md) — \`regenerateMemory\` creates \`memory.md\` itself and \`updateIndexNavMap\` handles missing nav markers, so migrations can rely on them instead of duplicating scaffol
+- [shell:true concatenates argv unquoted on Windows](learnings/shell-true-concatenates-argv-unquoted-on-windows.md) — With \`shell: true\`, args are joined raw, so a \`-f\` word inside a prompt string became a pi flag (instant exit 1). Prompts must carry their own cmd.exe quoting i
+- [Slash commands work headless via cmd.exe](learnings/slash-commands-work-headless-via-cmd-exe.md) — The "slash commands crash headless" gotcha is actually Git Bash / MSYS-specific path mangling, not a pi limitation. Running from cmd.exe — \`cmd //c "pi -p /wiki
+- [Tool contexts extend the full extension context](learnings/tool-contexts-extend-the-full-extension-context.md) — In this codebase, a tool's context is not a narrow object — it extends the complete extension context, meaning tools can update the footer UI directly. This is
+- [pi -p transcripts omit tool calls; args only on tool_execution_start](learnings/transcripts-omit-tool-args.md) — \`pi -p\` output shows only the final assistant answer — no tool-call evidence. For behavior scoring, \`WIKI_DEBUG_LOG=1\` in the agent writes a per-session \`.wiki-
+- [TUI-only surfaces untested by headless e2e](learnings/tui-only-surfaces-untested-by-headless-e2e.md) — wikiman's e2e probes run headless (\`pi -p\`), which silently skips all UI-facing paths: confirm dialogs (staleness, migration, re-init scaffold), \`ui.notify\` out
+- [Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff](learnings/typecheck-baseline-21-errors.md) — \`npx tsc -p ../tsconfig.wikicheck.json\` currently reports **21 pre-existing errors**, all peer-dependency type drift (e.g. \`AgentToolResult.details\`, \`ctx.mode\`
+- [/wiki:init re-init data loss (F1) — FIXED via ensure-semantics init](learnings/wiki-init-data-loss.md) — initBundle() used to unconditionally overwrite authored overview/glossary/log/last_updated on re-init (only pages/ and .wiki_ignore were guarded). FIXED 2026-11-16: init is now ensure-semantics — adds missing surfaces only.
+- [/wiki:stats output is TUI-only by design](learnings/wiki-stats-output-is-tui-only-by-design.md) — \`/wiki:stats\` prints nothing when run headless (exit 0, silent) because its output goes through \`ui.notify\`, which is UI-facing. Headless verification relies on
+- [Wiki sync triggers: command vs staleness check vs version flows](learnings/wiki-sync-trigger-map.md) — Three independent wiki triggers exist: \`/wiki:update\` (on-demand full sync), a session-start staleness check keyed to *code* changes vs \`docs/wiki/last_updated.
+- [Windows cmd.exe: use double quotes, not single](learnings/windows-cmd-exe-use-double-quotes-not-single.md) — cmd.exe does not honor single quotes — shell commands in the harness (e.g. git commit messages) must use double quotes on Windows.
 <!-- wiki-nav:end -->
 
 An [OKF](https://github.com/earendil-works/okf) bundle documenting this project.
@@ -399,51 +666,218 @@ An [OKF](https://github.com/earendil-works/okf) bundle documenting this project.
 - [Glossary](./glossary.md) — Key terms for this project
 - [Pages](./pages/) — Concepts, entities, and artifacts of this project
 `,
-  "learnings/handover-roadmap-status-1-of-11-items-done-next-slice-is-r1-.md": `---
+  "learnings/background-sync-footer-approximate.md": `---
 type: Learning
-title: "Handover roadmap status: 1 of 11 items done — next slice is R1 + F1 + curator inlining"
-description: As of the "did we implement all improvements?" scorecard review, only **1 of 11** backlog items is done.
-tags: [roadmap, backlog, project-status, prioritization]
-timestamp: "2026-11-16T09:01:22.630Z"
+title: Background-sync 'synced' footer state is an approximation
+description: "\`wiki: ● synced (background)\` shows on completion notify even if the curator partially failed; correctness is restored lazily because the next session's stalene"
+tags: [pi-extension, wiki, gotcha]
+timestamp: "2026-11-16T14:34:56.160Z"
 ---
 
-# Handover roadmap status: 1 of 11 items done — next slice is R1 + F1 + curator inlining
+# Background-sync 'synced' footer state is an approximation
 
-As of the "did we implement all improvements?" scorecard review, only **1 of 11** backlog items is done.
+\`wiki: ● synced (background)\` shows on completion notify even if the curator partially failed; correctness is restored lazily because the next session's staleness check re-flags and re-syncs. Self-correcting by design, not guaranteed-accurate UI.
+`,
+  "learnings/background-wiki-sync-fallback.md": `---
+type: Learning
+title: "Background wiki sync fallback: hidden queued message with 1h cooldown"
+description: When no subagent runner (agentman) is available, the stale-wiki sync queues as a hidden message that silently rides the user's next prompt. A 1h cooldown preven
+tags: [pi-extension, wiki]
+timestamp: "2026-11-16T14:34:56.124Z"
+---
+
+# Background wiki sync fallback: hidden queued message with 1h cooldown
+
+When no subagent runner (agentman) is available, the stale-wiki sync queues as a hidden message that silently rides the user's next prompt. A 1h cooldown prevents queued syncs from stacking across prompts.
+`,
+  "learnings/baseline-grep-first.md": `---
+type: Learning
+title: "Baseline: wikiman answers are correct but behavior is grep-first (map-first 0/2)"
+description: E2E baseline probes P1 and P3 both passed ground truth (caught the orphaned-middleware trap, picked the right file over the twin). But debug logs show the agent
+tags: [testing, behavior-scoring, r3]
+timestamp: "2026-11-16T09:50:39.183Z"
+---
+
+# Baseline: wikiman answers are correct but behavior is grep-first (map-first 0/2)
+
+E2E baseline probes P1 and P3 both passed ground truth (caught the orphaned-middleware trap, picked the right file over the twin). But debug logs show the agent goes filesystem-first (\`ls\` → \`read\` → \`grep\` ×2 → \`read\`, ~2 min) before ever calling \`wiki_search\`/\`wiki_get\`.
+
+The always-in-context contract isn't changing actual behavior — this is the primary target for R3's operating-contract rework. Score behavior via the debug log, not transcripts.
+`,
+  "learnings/debounce-dies-headless-race.md": `---
+type: Learning
+title: Debounce timer dies when pi -p exits (headless recap race)
+description: "The journal/recap write used a 1.2s debounce timer, which is killed when \`pi -p\` exits — the journal silently never landed in headless mode. Fix: in headless ha"
+tags: [pi-extension, headless, debounce]
+timestamp: "2026-11-16T10:24:49.324Z"
+---
+
+# Debounce timer dies when pi -p exits (headless recap race)
+
+The journal/recap write used a 1.2s debounce timer, which is killed when \`pi -p\` exits — the journal silently never landed in headless mode. Fix: in headless hatch mode run the recap inline (awaited); RPC mode stays excluded as a recursion guard.
+`,
+  "learnings/extensions-load-at-session-start-only.md": `---
+type: Learning
+title: Extensions load at session start only
+description: "pi extensions cannot hot-reload their own code: after a self-update the running session still executes the old version until \`/reload\` is issued or pi restarts."
+tags: [pi, reload]
+timestamp: "2026-11-16T12:30:45.569Z"
+---
+
+# Extensions load at session start only
+
+pi extensions cannot hot-reload their own code: after a self-update the running session still executes the old version until \`/reload\` is issued or pi restarts. \`/wiki:self-update\` therefore ends by reminding the user to \`/reload\`.
+`,
+  "learnings/fixture-dlq-unwired.md": `---
+type: Learning
+title: Fixture DLQ is genuinely unwired; ground truth must bless code-truthful readings
+description: The planted DLQ trap in the e2e fixture has no producer — the S6 agent's 'contrarian' claim that it was unwired was code-accurate. The ground-truth rubric was c
+tags: [testing, fixtures]
+timestamp: "2026-11-16T11:38:34.693Z"
+---
+
+# Fixture DLQ is genuinely unwired; ground truth must bless code-truthful readings
+
+The DLQ is PLANTED TRAP #3 in the e2e fixture and is genuinely unwired: \`services/worker/src/queues/dlq.ts\` creates the \`tasks-dlq\` queue and a 60s sweeper, but no producer ever calls \`dlq.add\` — BullMQ retries a job 3 times and then leaves it in the \`tasks\` queue's own failed set, so it never reaches \`tasks-dlq\`. An empty DLQ is the code-correct reading. The S6 agent's 'contrarian' claim that it was unwired was code-accurate, so the ground-truth rubric (tests/ground-truth.md) was corrected to bless code-accurate readings of planted traps rather than the fixture's original (wrong) expectation — contradicting ADR 2's prose is RIGHT when the code says otherwise.
+`,
+  "learnings/handover-roadmap-slice-1.md": `---
+type: Learning
+title: "Handover roadmap: R1 + F1 + curator slice done (ec1034a) — next is R2 journal"
+description: The **R1 + F1 + curator-inlining slice is done** — commit \`ec1034a\` (2026-11-16),
+tags: [roadmap, backlog, project-status, prioritization]
+timestamp: "2026-11-16T09:18:24.185Z"
+---
+
+# Handover roadmap: R1 + F1 + curator slice done (ec1034a) — next is R2 journal
+
+> **Status moved on (2026-11-16T09:19Z):** the current roadmap snapshot is [[handover-roadmap-slice-2]] — 4 of ~11 done, next slice F2 + R2 (R2 now gated on F2's migration layer). This note keeps the slice's commit/rollback and verification details.
+
+The **R1 + F1 + curator-inlining slice is done** — commit \`ec1034a\` (2026-11-16),
+on top of restore-point commit \`41d6d93\` / tag \`restore-pre-r1\`
+(\`git reset --hard restore-pre-r1\` rolls back the whole slice).
+
+Shipped: R1 in-process recap ([[recap-runs-in-process-not-via-agentman-subagent]] —
+\`runInlineRecap\`/\`parseRecapNotes\`), F1 ensure-semantics \`initBundle\`
+([[wiki-init-is-ensure-semantics-never-overwrites-authored]]), \`spawnWikiAgent\`
+\`fallbackSteer\` for \`/wiki:update\` + staleness prompts without agentman.
+
+Verified statically: tsc exactly at the 21-error pre-existing baseline (0 new) and
+JSON parser smoke-tested against fenced/prose/empty/garbage inputs. **Not yet
+runtime-tested** — per the house gotcha this needs a fresh session or \`/reload\`:
+1. fresh-install recap: a turn with a clear learning → note file appears +
+   "wiki recap: recorded N learnings" notification
+2. \`/wiki:init\` on this very bundle → authored overview survives
+3. \`/wiki:update\` with agentman present vs. absent (fallback path)
+
+Remaining backlog: R2 (session journal — will need the F2 migration layer),
+R3–R5 (injection budget, git-aware injection, ranked search), R6 (dedupe
+governors), R7 (\`/wiki:digest\`, \`/wiki:stats\`, viewer search), R8 (global tier).
+
+Supersedes the earlier "1 of 11 items done" status learning.
+`,
+  "learnings/handover-roadmap-slice-2.md": `---
+type: Learning
+title: "Handover roadmap status: 4 of ~11 items done — next slice is F2 + R2"
+description: Second scorecard review: R1 (self-contained recap), F1 (init data-loss fix) and curator fallback are done; still open: F2, R2–R8, update check, tests. Next slice: F2 + R2.
+tags: [roadmap, backlog, project-status, prioritization]
+timestamp: "2026-11-16T09:19:20.914Z"
+---
+
+# Handover roadmap status: 4 of ~11 items done — next slice is F2 + R2
+
+As of the second "did we implement all improvements?" scorecard (2026-11-16), **~4 of the ~11 planned items are done**, plus the user-requested disconnect/reconnect extra. This supersedes both the earlier 1-of-11 snapshot previously recorded in this file and the interim slice-done note ([[handover-roadmap-slice-1]]), which retains the slice's commit/rollback and verification details.
 
 **Implemented:**
 - Wiki bundle content (overview, glossary, file-tree descriptions)
-- Disconnect/reconnect (\`/wiki:disconnect\` + \`/wiki:reconnect\`, agent-home state keyed per cwd)
+- Disconnect/reconnect (user-requested extra — agent-home state keyed per cwd)
+- **R1** — recap fully self-contained: single in-process completion call via \`modelRegistry.complete\`, JSON-out → deterministic writes through the \`noteInto\`/\`notePage\` funnel; no agentman, no prompt copying
+- **F1** — re-init data-loss fixed: \`initBundle\` is now ensure-semantics (adds missing surfaces only, authored content never overwritten, \`last_updated.md\` never reset) — resolves [[wiki-init-data-loss]]
+- Curator fallback — \`/wiki:update\` + staleness prompts fall back to an in-session update when agentman is absent
 
-**Not implemented — handover roadmap R1–R8:**
-- R1 inline the recap, kill the agentman dependency (top priority — the flagship end-of-turn recap silently no-ops without it)
-- R2 session journal / resume card
-- R3 ranked, token-budgeted injection
-- R4 git-aware targeted injection
-- R5 ranked \`wiki_search\` (still a substring scan)
-- R6 dedupe-at-write, lifecycle, governors
-- R7 \`/wiki:digest\`, \`/wiki:stats\`, bootstrap import, viewer search
-- R8 global memory tier
+**Still open:**
+- **F2** — \`okf_version\` migration layer (schema updates reaching existing bundles) — see [[okf-version-never-checked]]
+- **R2** — session journal + resume card ("last time we were mid-X")
+- **R3** — token-budgeted, ranked injection (nav map still inlined wholesale)
+- **R4** — git-aware targeted injection ("3 learnings apply to your recent files")
+- **R5** — ranked \`wiki_search\` (still a substring scan)
+- **R6** — dedupe-at-write, lifecycle, injection governors
+- **R7** — \`/wiki:digest\`, \`/wiki:stats\`, bootstrap import, viewer search
+- **R8** — global (agent-home) memory tier (deliberately last)
+- Optional daily, ask-first "new version available" update check
+- Tests: still zero (only the 21-error tsc baseline)
 
-**Also open from the architecture review:**
-- F1 \`/wiki:init\` data-loss bug — see [[wiki-init-on-an-existing-bundle-destroys-authored-content-on]]
-- F2 \`okf_version\` written but never read, so no migration path — see [[okf-version-frontmatter-is-stamped-at-scaffold-but-never-con]]
-- Update propagation mechanisms (extension update check, bundle migrations, curator prompt inlining) — decision recorded, not built
-- Tests: zero (only the type-check config with its 21-error peer-dep baseline)
+**Pending runtime verification:** tsc and parser smoke tests pass, but the recap e2e (fresh session, real turn → note file) has not run yet. That is the handover's verification standard (see [[new-commands-need-reload]]) and gates building R2 on top of the recap.
 
-**Recommended next slice (proposed, awaiting user go-ahead):** R1 + F1 + curator prompt inlining — they share machinery, and F1 is a genuine data-loss bug sitting in the code today.
+**Recommended next slice (proposed, awaiting user go-ahead):** F2 + R2 — R2 is the first feature that genuinely needs F2's migration layer to reach existing bundles, so they share machinery.
 
 This is point-in-time; update or delete once items land.
 `,
   "learnings/index.md": `# Learnings
 
-- [okf_version frontmatter is stamped at scaffold but never consumed](./okf-version-frontmatter-is-stamped-at-scaffold-but-never-con.md) - \`indexFrontmatter()\` stamps \`okf_version: "0.1"\` into a bundle's root \`index.md\` at scaffold time (index.ts ~line 1232), but **nothing ever reads it** — there i
-- [/wiki:init on an existing bundle destroys authored content (only pages/ is guarded)](./wiki-init-on-an-existing-bundle-destroys-authored-content-on.md) - \`initBundle()\` (index.ts, \`/wiki:init\` handler) unconditionally \`writeFile\`s \`index.md\`, \`overview.md\`, \`log.md\`, \`last_updated.md\`, \`glossary.md\`, and the \`pag
-- [Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff](./type-check-baseline-is-21-pre-existing-peer-dep-errors-verif.md) - \`npx tsc -p ../tsconfig.wikicheck.json\` currently reports **21 pre-existing errors**, all peer-dependency type drift (e.g. \`AgentToolResult.details\`, \`ctx.mode\`
-- [New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p](./new-pi-extension-commands-need-a-fresh-session-or-reload-tes.md) - Two gotchas when developing this pi extension (referenced as the "house gotcha" but never written down until now):
-- [Handover roadmap status: 1 of 11 items done — next slice is R1 + F1 + curator inlining](./handover-roadmap-status-1-of-11-items-done-next-slice-is-r1-.md) - As of the "did we implement all improvements?" scorecard review, only **1 of 11** backlog items is done.
+- [okf_version frontmatter is stamped at scaffold but never consumed](./okf-version-never-checked.md) - \`indexFrontmatter()\` stamps \`okf_version: "0.1"\` into a bundle's root \`index.md\` at scaffold time (index.ts ~line 1232), but **nothing ever reads it** — there i
+- [/wiki:init on an existing bundle destroys authored content (only pages/ is guarded)](./wiki-init-data-loss.md) - \`initBundle()\` (index.ts, \`/wiki:init\` handler) unconditionally \`writeFile\`s \`index.md\`, \`overview.md\`, \`log.md\`, \`last_updated.md\`, \`glossary.md\`, and the \`pag
+- [Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff](./typecheck-baseline-21-errors.md) - \`npx tsc -p ../tsconfig.wikicheck.json\` currently reports **21 pre-existing errors**, all peer-dependency type drift (e.g. \`AgentToolResult.details\`, \`ctx.mode\`
+- [New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p](./new-commands-need-reload.md) - Two gotchas when developing this pi extension (referenced as the "house gotcha" but never written down until now):
+- [Handover roadmap status: 1 of 11 items done — next slice is R1 + F1 + curator inlining](./handover-roadmap-slice-2.md) - As of the "did we implement all improvements?" scorecard review, only **1 of 11** backlog items is done.
+- [Handover roadmap: R1 + F1 + curator slice done (ec1034a) — next is R2 journal](./handover-roadmap-slice-1.md) - The **R1 + F1 + curator-inlining slice is done** — commit \`ec1034a\` (2026-11-16),
+- [pi -p transcripts omit tool calls; args only on tool_execution_start](./transcripts-omit-tool-args.md) - \`pi -p\` output shows only the final assistant answer — no tool-call evidence. For behavior scoring, \`WIKI_DEBUG_LOG=1\` in the agent writes a per-session \`.wiki-
+- [Baseline: wikiman answers are correct but behavior is grep-first (map-first 0/2)](./baseline-grep-first.md) - E2E baseline probes P1 and P3 both passed ground truth (caught the orphaned-middleware trap, picked the right file over the twin). But debug logs show the agent
+- [Windows cmd.exe: use double quotes, not single](./windows-cmd-exe-use-double-quotes-not-single.md) - cmd.exe does not honor single quotes — shell commands in the harness (e.g. git commit messages) must use double quotes on Windows.
+- [Migration writes shouldn't trip staleness nag](./migration-writes-shouldn-t-trip-staleness-nag.md) - After migrating, bump the bundle's \`last_updated\` so the migration's own writes don't trigger the staleness nag on next session.
+- [regenerateMemory/updateIndexNavMap tolerate missing state](./regenerate-tolerates-missing.md) - \`regenerateMemory\` creates \`memory.md\` itself and \`updateIndexNavMap\` handles missing nav markers, so migrations can rely on them instead of duplicating scaffol
+- [Debounce timer dies when pi -p exits (headless recap race)](./debounce-dies-headless-race.md) - The journal/recap write used a 1.2s debounce timer, which is killed when \`pi -p\` exits — the journal silently never landed in headless mode. Fix: in headless ha
+- [shell:true concatenates argv unquoted on Windows](./shell-true-concatenates-argv-unquoted-on-windows.md) - With \`shell: true\`, args are joined raw, so a \`-f\` word inside a prompt string became a pi flag (instant exit 1). Prompts must carry their own cmd.exe quoting i
+- [Recap dedupe gap: transcript must include wiki-tool evidence](./recap-dedupe-tool-evidence.md) - \`collectTurnText\` originally captured only user/assistant text, so the recap could not see that a \`wiki_note_*\` call had already fired in-turn and wrote a parap
+- [JIT git-audit relevance pattern (R4) verified in practice](./jit-git-audit-r4.md) - The agent performed a single git-audit call (log + status + last-commit stat), then read exactly the 3 recently-touched files and \`wiki_get\`ed the 3 matching le
+- [Slash commands work headless via cmd.exe](./slash-commands-work-headless-via-cmd-exe.md) - The "slash commands crash headless" gotcha is actually Git Bash / MSYS-specific path mangling, not a pi limitation. Running from cmd.exe — \`cmd //c "pi -p /wiki
+- [/wiki:stats output is TUI-only by design](./wiki-stats-output-is-tui-only-by-design.md) - \`/wiki:stats\` prints nothing when run headless (exit 0, silent) because its output goes through \`ui.notify\`, which is UI-facing. Headless verification relies on
+- [Probe tool logs accumulate across sessions without per-run clearing](./probe-logs-need-per-run-clear.md) - In the wikiman-e2e gauntlet, round-1 \`.tools.log\` files accumulated across probe sessions, so blind critics grading S2/S3/S6 were partially reading S1's tool ca
+- [Fixture DLQ is genuinely unwired; ground truth must bless code-truthful readings](./fixture-dlq-unwired.md) - The planted DLQ trap in the e2e fixture has no producer — the S6 agent's 'contrarian' claim that it was unwired was code-accurate. The ground-truth rubric was c
+- [TUI-only surfaces untested by headless e2e](./tui-only-surfaces-untested-by-headless-e2e.md) - wikiman's e2e probes run headless (\`pi -p\`), which silently skips all UI-facing paths: confirm dialogs (staleness, migration, re-init scaffold), \`ui.notify\` out
+- [Launching pi TUI QA windows on Windows](./launching-pi-tui-qa-windows-on-windows.md) - To get a visible pi TUI session for QA on Windows, launch via \`wt -w new\` — a plain \`Start-Process\` of a \`.cmd\` lands in a hidden conhost. When multiple Windows
+- [Wiki sync triggers: command vs staleness check vs version flows](./wiki-sync-trigger-map.md) - Three independent wiki triggers exist: \`/wiki:update\` (on-demand full sync), a session-start staleness check keyed to *code* changes vs \`docs/wiki/last_updated.
+- [Extensions load at session start only](./extensions-load-at-session-start-only.md) - pi extensions cannot hot-reload their own code: after a self-update the running session still executes the old version until \`/reload\` is issued or pi restarts.
+- [Tool contexts extend the full extension context](./tool-contexts-extend-the-full-extension-context.md) - In this codebase, a tool's context is not a narrow object — it extends the complete extension context, meaning tools can update the footer UI directly. This is
+- [Background wiki sync fallback: hidden queued message with 1h cooldown](./background-wiki-sync-fallback.md) - When no subagent runner (agentman) is available, the stale-wiki sync queues as a hidden message that silently rides the user's next prompt. A 1h cooldown preven
+- [Background-sync 'synced' footer state is an approximation](./background-sync-footer-approximate.md) - \`wiki: ● synced (background)\` shows on completion notify even if the curator partially failed; correctness is restored lazily because the next session's stalene
 `,
-  "learnings/new-pi-extension-commands-need-a-fresh-session-or-reload-tes.md": `---
+  "learnings/jit-git-audit-r4.md": `---
+type: Learning
+title: JIT git-audit relevance pattern (R4) verified in practice
+description: The agent performed a single git-audit call (log + status + last-commit stat), then read exactly the 3 recently-touched files and \`wiki_get\`ed the 3 matching le
+tags: [relevance, git, jit]
+timestamp: "2026-11-16T10:34:27.285Z"
+---
+
+# JIT git-audit relevance pattern (R4) verified in practice
+
+The agent performed a single git-audit call (log + status + last-commit stat), then read exactly the 3 recently-touched files and \`wiki_get\`ed the 3 matching learnings — including one from a prior session ("dead-code ratelimit"), demonstrating cross-session self-learning compounding. JIT relevance (git-aware boost) beats eager loading.
+`,
+  "learnings/launching-pi-tui-qa-windows-on-windows.md": `---
+type: Learning
+title: Launching pi TUI QA windows on Windows
+description: To get a visible pi TUI session for QA on Windows, launch via \`wt -w new\` — a plain \`Start-Process\` of a \`.cmd\` lands in a hidden conhost. When multiple Windows
+tags: [windows, testing, orca]
+timestamp: "2026-11-16T12:03:47.888Z"
+---
+
+# Launching pi TUI QA windows on Windows
+
+To get a visible pi TUI session for QA on Windows, launch via \`wt -w new\` — a plain \`Start-Process\` of a \`.cmd\` lands in a hidden conhost. When multiple WindowsTerminal windows exist, \`--restore-window\` can bring the *wrong* one forward; enumerate all top-level windows and call \`SetForegroundWindow\` on the exact HWND instead.
+`,
+  "learnings/migration-writes-shouldn-t-trip-staleness-nag.md": `---
+type: Learning
+title: Migration writes shouldn't trip staleness nag
+description: After migrating, bump the bundle's \`last_updated\` so the migration's own writes don't trigger the staleness nag on next session.
+tags: [migration, staleness]
+timestamp: "2026-11-16T10:03:12.681Z"
+---
+
+# Migration writes shouldn't trip staleness nag
+
+After migrating, bump the bundle's \`last_updated\` so the migration's own writes don't trigger the staleness nag on next session.
+`,
+  "learnings/new-commands-need-reload.md": `---
 type: Learning
 title: New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p
 description: "Two gotchas when developing this pi extension (referenced as the "house gotcha" but never written down until now):"
@@ -461,7 +895,7 @@ Two gotchas when developing this pi extension (referenced as the "house gotcha" 
 
 Observed 2026-11-16 while adding \`/wiki:disconnect\` / \`/wiki:reconnect\` — new commands were invisible to the session that implemented them.
 `,
-  "learnings/okf-version-frontmatter-is-stamped-at-scaffold-but-never-con.md": `---
+  "learnings/okf-version-never-checked.md": `---
 type: Learning
 title: okf_version frontmatter is stamped at scaffold but never consumed
 description: "\`indexFrontmatter()\` stamps \`okf_version: "0.1"\` into a bundle's root \`index.md\` at scaffold time (index.ts ~line 1232), but **nothing ever reads it** — there i"
@@ -479,7 +913,107 @@ This unused field is the natural hook for bundle update propagation: the extensi
 
 - \`index.ts\` — \`indexFrontmatter()\` (~line 1232): sole writer of \`okf_version\`; no consumer anywhere
 `,
-  "learnings/type-check-baseline-is-21-pre-existing-peer-dep-errors-verif.md": `---
+  "learnings/probe-logs-need-per-run-clear.md": `---
+type: Learning
+title: Probe tool logs accumulate across sessions without per-run clearing
+description: In the wikiman-e2e gauntlet, round-1 \`.tools.log\` files accumulated across probe sessions, so blind critics grading S2/S3/S6 were partially reading S1's tool ca
+tags: [testing, harness]
+timestamp: "2026-11-16T11:38:34.666Z"
+---
+
+# Probe tool logs accumulate across sessions without per-run clearing
+
+In the wikiman-e2e gauntlet, round-1 \`.tools.log\` files accumulated across probe sessions, so blind critics grading S2/S3/S6 were partially reading S1's tool calls — contaminated evidence. The runner now clears the log before each run; always do this when sharing per-session tool logs as scoring evidence.
+`,
+  "learnings/recap-dedupe-tool-evidence.md": `---
+type: Learning
+title: "Recap dedupe gap: transcript must include wiki-tool evidence"
+description: \`collectTurnText\` originally captured only user/assistant text, so the recap could not see that a \`wiki_note_*\` call had already fired in-turn and wrote a parap
+tags: [wiki-recap, dedupe]
+timestamp: "2026-11-16T10:34:27.274Z"
+---
+
+# Recap dedupe gap: transcript must include wiki-tool evidence
+
+\`collectTurnText\` originally captured only user/assistant text, so the recap could not see that a \`wiki_note_*\` call had already fired in-turn and wrote a paraphrase duplicate afterwards. Fix: surface \`TOOL wiki_note_*\` evidence in \`collectTurnText\` plus an "additions only; duplicating is the worst thing you can do" clause in the recap prompt. Verified via P7b: one learning, zero recap duplicates.
+`,
+  "learnings/regenerate-tolerates-missing.md": `---
+type: Learning
+title: regenerateMemory/updateIndexNavMap tolerate missing state
+description: \`regenerateMemory\` creates \`memory.md\` itself and \`updateIndexNavMap\` handles missing nav markers, so migrations can rely on them instead of duplicating scaffol
+tags: [migration, helpers]
+timestamp: "2026-11-16T10:03:12.684Z"
+---
+
+# regenerateMemory/updateIndexNavMap tolerate missing state
+
+\`regenerateMemory\` creates \`memory.md\` itself and \`updateIndexNavMap\` handles missing nav markers, so migrations can rely on them instead of duplicating scaffold/injection logic.
+`,
+  "learnings/shell-true-concatenates-argv-unquoted-on-windows.md": `---
+type: Learning
+title: "shell:true concatenates argv unquoted on Windows"
+description: "With \`shell: true\`, args are joined raw, so a \`-f\` word inside a prompt string became a pi flag (instant exit 1). Prompts must carry their own cmd.exe quoting i"
+tags: [windows, shell, gotcha]
+timestamp: "2026-11-16T10:24:49.334Z"
+---
+
+# shell:true concatenates argv unquoted on Windows
+
+With \`shell: true\`, args are joined raw, so a \`-f\` word inside a prompt string became a pi flag (instant exit 1). Prompts must carry their own cmd.exe quoting in the e2e runner.
+`,
+  "learnings/slash-commands-work-headless-via-cmd-exe.md": `---
+type: Learning
+title: Slash commands work headless via cmd.exe
+description: The "slash commands crash headless" gotcha is actually Git Bash / MSYS-specific path mangling, not a pi limitation. Running from cmd.exe — \`cmd //c "pi -p /wiki
+tags: [testing, slash-commands]
+timestamp: "2026-11-16T10:38:53.418Z"
+---
+
+# Slash commands work headless via cmd.exe
+
+The "slash commands crash headless" gotcha is actually Git Bash / MSYS-specific path mangling, not a pi limitation. Running from cmd.exe — \`cmd //c "pi -p /wiki:digest"\` — works fine and was used to e2e-verify \`/wiki:digest\` and \`/wiki:stats\`.
+
+Rule of thumb: never test slash commands from Git Bash; use cmd.exe for headless verification instead.
+`,
+  "learnings/tool-contexts-extend-the-full-extension-context.md": `---
+type: Learning
+title: Tool contexts extend the full extension context
+description: In this codebase, a tool's context is not a narrow object — it extends the complete extension context, meaning tools can update the footer UI directly. This is 
+tags: [pi-extension, footer, tools]
+timestamp: "2026-11-16T14:34:56.091Z"
+---
+
+# Tool contexts extend the full extension context
+
+In this codebase, a tool's context is not a narrow object — it extends the complete extension context, meaning tools can update the footer UI directly. This is how the queued-sync indicator is set/cleared from inside \`wiki_mark_synced\` without any new plumbing.
+`,
+  "learnings/transcripts-omit-tool-args.md": `---
+type: Learning
+title: pi -p transcripts omit tool calls; args only on tool_execution_start
+description: \`pi -p\` output shows only the final assistant answer — no tool-call evidence. For behavior scoring, \`WIKI_DEBUG_LOG=1\` in the agent writes a per-session \`.wiki-
+tags: [pi-extension, testing, e2e-harness]
+timestamp: "2026-11-16T09:50:39.174Z"
+---
+
+# pi -p transcripts omit tool calls; args only on tool_execution_start
+
+\`pi -p\` output shows only the final assistant answer — no tool-call evidence. For behavior scoring, \`WIKI_DEBUG_LOG=1\` in the agent writes a per-session \`.wiki-debug.log\` of every tool execution.
+
+Gotcha: \`ToolExecutionEndEvent\` carries empty args (\`{}\`); arguments only appear on the \`tool_execution_start\` event. The debug seam must capture both events.
+`,
+  "learnings/tui-only-surfaces-untested-by-headless-e2e.md": `---
+type: Learning
+title: TUI-only surfaces untested by headless e2e
+description: "wikiman's e2e probes run headless (\`pi -p\`), which silently skips all UI-facing paths: confirm dialogs (staleness, migration, re-init scaffold), \`ui.notify\` out"
+tags: [tui, testing]
+timestamp: "2026-11-16T11:47:19.993Z"
+---
+
+# TUI-only surfaces untested by headless e2e
+
+wikiman's e2e probes run headless (\`pi -p\`), which silently skips all UI-facing paths: confirm dialogs (staleness, migration, re-init scaffold), \`ui.notify\` output (so \`/wiki:stats\` produces no visible output headless), footer \`wiki:\` indicator states, and the \`/wiki\` browser viewer's actual rendering.
+`,
+  "learnings/typecheck-baseline-21-errors.md": `---
 type: Learning
 title: Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff
 description: \`npx tsc -p ../tsconfig.wikicheck.json\` currently reports **21 pre-existing errors**, all peer-dependency type drift (e.g. \`AgentToolResult.details\`, \`ctx.mode\`
@@ -495,26 +1029,64 @@ timestamp: "2026-11-16T08:52:59.090Z"
 
 Observed 2026-11-16 while adding disconnect/reconnect: 21 errors before, 21 after, identical codes.
 `,
-  "learnings/wiki-init-on-an-existing-bundle-destroys-authored-content-on.md": `---
+  "learnings/wiki-init-data-loss.md": `---
 type: Learning
-title: "/wiki:init on an existing bundle destroys authored content (only pages/ is guarded)"
-description: "\`initBundle()\` (index.ts, \`/wiki:init\` handler) unconditionally \`writeFile\`s \`index.md\`, \`overview.md\`, \`log.md\`, \`last_updated.md\`, \`glossary.md\`, and the \`pag"
-tags: [gotcha, data-loss, wiki-init, initBundle]
-timestamp: "2026-11-16T08:48:51.978Z"
+title: "/wiki:init re-init data loss (F1) — FIXED via ensure-semantics init"
+description: "initBundle() used to unconditionally overwrite authored overview/glossary/log/last_updated on re-init (only pages/ and .wiki_ignore were guarded). FIXED 2026-11-16: init is now ensure-semantics — adds missing surfaces only."
+tags: [gotcha, data-loss, wiki-init, initBundle, fixed, f1]
+timestamp: "2026-11-16T09:19:20.914Z"
 ---
 
-# /wiki:init on an existing bundle destroys authored content (only pages/ is guarded)
+# /wiki:init re-init data loss (F1) — FIXED via ensure-semantics init
 
-\`initBundle()\` (index.ts, \`/wiki:init\` handler) unconditionally \`writeFile\`s \`index.md\`, \`overview.md\`, \`log.md\`, \`last_updated.md\`, \`glossary.md\`, and the \`pages/**/index.md\` scaffolds. Only \`.wiki_ignore\` is guarded by \`existsSync\`. The confirm dialog promises "will not overwrite existing concept files" — that is true **only for \`pages/\`**; any authored overview/glossary content is wiped by a re-init. Data-loss gotcha: never re-run \`/wiki:init\` on a bundle with hand-written content until this is fixed.
+**RESOLVED (2026-11-16, handover item F1):** \`initBundle\` is now ensure-semantics — every scaffold write is guarded ("writeIfMissing"), only missing surfaces are added, authored overview/glossary/concept files survive a re-init, and \`last_updated.md\` is never reset. Re-running \`/wiki:init\` on a hand-written bundle is now safe. The analysis below is kept for context; do **not** treat this as an open gotcha anymore.
 
-Fix direction (agreed in the update-propagation decision): turn \`initBundle\` into **\`ensureBundle()\`** — every write guarded by \`existsSync\`, only *add missing surfaces*, regenerate only the auto-managed nav-map section between markers. \`ensureBundle()\` doubles as migration step zero (fresh init and old-bundle catch-up share one code path).
+Original finding (pre-fix): \`initBundle()\` (\`/wiki:init\` handler) unconditionally \`writeFile\`'d \`index.md\`, \`overview.md\`, \`log.md\`, \`last_updated.md\`, \`glossary.md\`, and the \`pages/**/index.md\` scaffolds. Only \`.wiki_ignore\` was guarded by \`existsSync\`. The confirm dialog promised "will not overwrite existing concept files" — that was true **only for \`pages/\`\`; any authored overview/glossary content was wiped by a re-init.
+
+The fix followed the direction agreed in the update-propagation decision: turn \`initBundle\` into an **ensureBundle**-style pass — every write guarded by \`existsSync\`, only *add missing surfaces*, regenerate only the auto-managed nav-map section between markers. \`ensureBundle()\` semantics double as migration step zero (fresh init and old-bundle catch-up share one code path) — the foundation F2's \`okf_version\` migration layer (see [[okf-version-never-checked]] and [[migrations-additive-ask-first]]) builds on.
 
 ## Source
 
-- \`index.ts\` — \`initBundle()\` (~line 1047): unguarded writes to index/overview/log/last_updated/glossary
+- \`index.ts\` — \`initBundle()\` ensure-semantics rewrite (\`writeIfMissing\` helper, \`hadAuthored\` gates the auto-doc LLM pass)
+`,
+  "learnings/wiki-stats-output-is-tui-only-by-design.md": `---
+type: Learning
+title: "/wiki:stats output is TUI-only by design"
+description: "\`/wiki:stats\` prints nothing when run headless (exit 0, silent) because its output goes through \`ui.notify\`, which is UI-facing. Headless verification relies on"
+tags: [wiki, testing]
+timestamp: "2026-11-16T10:38:53.423Z"
+---
+
+# /wiki:stats output is TUI-only by design
+
+\`/wiki:stats\` prints nothing when run headless (exit 0, silent) because its output goes through \`ui.notify\`, which is UI-facing. Headless verification relies on the fact that its underlying functions (injection size, counts, sync time) are already e2e-proven via injection paths.
+`,
+  "learnings/wiki-sync-trigger-map.md": `---
+type: Learning
+title: "Wiki sync triggers: command vs staleness check vs version flows"
+description: "Three independent wiki triggers exist: \`/wiki:update\` (on-demand full sync), a session-start staleness check keyed to *code* changes vs \`docs/wiki/last_updated."
+tags: [pi-extension, wiki, sync]
+timestamp: "2026-11-16T12:29:12.439Z"
+---
+
+# Wiki sync triggers: command vs staleness check vs version flows
+
+Three independent wiki triggers exist: \`/wiki:update\` (on-demand full sync), a session-start staleness check keyed to *code* changes vs \`docs/wiki/last_updated.md\` (not version, with 1h ask cooldown), and version flows limited to the once-per-\`okf_version\` F2 schema migration and a daily wikiman update notify. Wiki content never auto-updates on version bump; the staleness prompt is only a nudge — declining just cools down and the stale footer dot persists. \`wiki_mark_synced\` stamps the wiki current after manual edits. The daily update-available notification points at \`/wiki:self-update\` (or the manual \`pi update git:github.com/monstrous-dev/wikiman\` CLI).
+`,
+  "learnings/windows-cmd-exe-use-double-quotes-not-single.md": `---
+type: Learning
+title: "Windows cmd.exe: use double quotes, not single"
+description: cmd.exe does not honor single quotes — shell commands in the harness (e.g. git commit messages) must use double quotes on Windows.
+tags: [windows, shell]
+timestamp: "2026-11-16T09:50:39.195Z"
+---
+
+# Windows cmd.exe: use double quotes, not single
+
+cmd.exe does not honor single quotes — shell commands in the harness (e.g. git commit messages) must use double quotes on Windows. Because \`spawnSync\` with \`shell: true\` joins argv raw, \`tests/run-probe.mjs\` wraps its \`pi -p\` prompt in double quotes and escapes any embedded \`"\` as \`''\` (cmd.exe's doubling escape) so multi-sentence prompts survive.
 `,
   "memory.md": `---
-okf_version: "0.1"
+okf_version: "0.2"
 ---
 
 <!-- wiki-memory:start -->
@@ -523,24 +1095,48 @@ okf_version: "0.1"
 Auto-generated digest of the most recent conventions, decisions, rules and
 development patterns, plus architecture and global patterns — newest first.
 The actual files live in the wiki subfolders; follow the links (clickable in /wiki).
-Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T09:01:22.634Z.
+Regenerated on every wiki write and on wiki_mark_synced. Generated 2026-11-16T14:35:36.767Z.
 
 ## Recent Decisions
 
-- [Disconnect/reconnect state lives in agent home, keyed per cwd](decisions/disconnect-reconnect-state-lives-in-agent-home-keyed-per-cwd.md) — Context (2026-11-16)
-- [Update propagation: okf_version-gated additive bundle migrations + prompt-in-package](decisions/update-propagation-okf-version-gated-additive-bundle-migrati.md) — Context (2026-11-16)
+- [R3 nav injection replaces grep-first exploration](decisions/r3-nav-injection-replaces-grep-first-exploration.md) — \`buildInjection\` now emits a ranked nav slice under a budget plus a hard imperative operating contract: consult the wiki map first, grep onl… (2026-11-16)
+- [Acceptance bar redefined: OKF wiki as a native LLM skill, 9/10 rubric on real transcripts](decisions/acceptance-bar-native-skill.md) — Context (2026-11-16)
+- [Gauntlet acceptance bar: 9/10 LLM memory with self-learning, verified e2e](decisions/gauntlet-bar-llm-memory-e2e.md) — Context (2026-11-16)
+- [Wiki:init is ensure-semantics — never overwrites authored content](decisions/wiki-init-ensure-semantics.md) — Context (2026-11-16)
+- [Recap runs in-process, not via agentman subagent](decisions/recap-runs-in-process-not-via-agentman-subagent.md) — Context (2026-11-16)
+- [Disconnect/reconnect state lives in agent home, keyed per cwd](decisions/disconnect-state-agent-home.md) — Context (2026-11-16)
+- [Update propagation: okf_version-gated additive bundle migrations + prompt-in-package](decisions/update-propagation-okf-migrations.md) — Context (2026-11-16)
 
 ## Active Rules
 
-- [Bundle migrations are additive-only, idempotent, and always ask-first](rules/bundle-migrations-are-additive-only-idempotent-and-always-as.md) — **Guideline**: Any new docs/wiki/ bundle surface or feature must ship as an **additive-only, idempotent migration step** keyed on a bump of … (2026-11-16)
+- [Match the task, not the recency (contract rule 5)](rules/match-the-task-not-the-recency-contract-rule-5.md) — Probe agents should open exactly the concepts named by the task, not chase recently-viewed files. Enforcing this halved session durations (S… (2026-11-16)
+- [Exact-title duplicates rejected at the funnel level](rules/exact-title-dedupe-funnel.md) — \`wiki_note_*\` calls with an exact duplicate title return "Already recorded — id — reference as [[wikilink]]" instead of writing. Always refe… (2026-11-16)
+- [Auto-generated files in docs/wiki/ must be validator-invisible](rules/generated-files-validator-invisible.md) — Journal \`.md\` files without frontmatter tripped validator E1, and \`wiki_mark_synced\` refuses while errors exist — so agents burned tool call… (2026-11-16)
+- [Migration prompts: ask in UI, silent headless](rules/migration-prompts-ask-in-ui-silent-headless.md) — Bundle version migration prompts ask-first in the real UI but migrate silently in headless/RPC sessions, with per-cwd + per-version decline … (2026-11-16)
+- [Bundle migrations are additive-only, idempotent, and always ask-first](rules/migrations-additive-ask-first.md) — **Guideline**: Any new docs/wiki/ bundle surface or feature must ship as an **additive-only, idempotent migration step** keyed on a bump of … (2026-11-16)
 
 ## Recent Learnings — development patterns
 
-- [Handover roadmap status: 1 of 11 items done — next slice is R1 + F1 + curator inlining](learnings/handover-roadmap-status-1-of-11-items-done-next-slice-is-r1-.md) — As of the "did we implement all improvements?" scorecard review, only **1 of 11** backlog items is done. (2026-11-16)
-- [New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p](learnings/new-pi-extension-commands-need-a-fresh-session-or-reload-tes.md) — Two gotchas when developing this pi extension (referenced as the "house gotcha" but never written down until now): (2026-11-16)
-- [Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff](learnings/type-check-baseline-is-21-pre-existing-peer-dep-errors-verif.md) — \`npx tsc -p ../tsconfig.wikicheck.json\` currently reports **21 pre-existing errors**, all peer-dependency type drift (e.g. \`AgentToolResult.… (2026-11-16)
-- [/wiki:init on an existing bundle destroys authored content (only pages/ is guarded)](learnings/wiki-init-on-an-existing-bundle-destroys-authored-content-on.md) — \`initBundle()\` (index.ts, \`/wiki:init\` handler) unconditionally \`writeFile\`s \`index.md\`, \`overview.md\`, \`log.md\`, \`last_updated.md\`, \`glossa… (2026-11-16)
-- [okf_version frontmatter is stamped at scaffold but never consumed](learnings/okf-version-frontmatter-is-stamped-at-scaffold-but-never-con.md) — \`indexFrontmatter()\` stamps \`okf_version: "0.1"\` into a bundle's root \`index.md\` at scaffold time (index.ts ~line 1232), but **nothing ever … (2026-11-16)
+- [Background-sync 'synced' footer state is an approximation](learnings/background-sync-footer-approximate.md) — \`wiki: ● synced (background)\` shows on completion notify even if the curator partially failed; correctness is restored lazily because the ne… (2026-11-16)
+- [Background wiki sync fallback: hidden queued message with 1h cooldown](learnings/background-wiki-sync-fallback.md) — When no subagent runner (agentman) is available, the stale-wiki sync queues as a hidden message that silently rides the user's next prompt. … (2026-11-16)
+- [Tool contexts extend the full extension context](learnings/tool-contexts-extend-the-full-extension-context.md) — In this codebase, a tool's context is not a narrow object — it extends the complete extension context, meaning tools can update the footer U… (2026-11-16)
+- [Extensions load at session start only](learnings/extensions-load-at-session-start-only.md) — pi extensions cannot hot-reload their own code: after a self-update the running session still executes the old version until \`/reload\` is is… (2026-11-16)
+- [Wiki sync triggers: command vs staleness check vs version flows](learnings/wiki-sync-trigger-map.md) — Three independent wiki triggers exist: \`/wiki:update\` (on-demand full sync), a session-start staleness check keyed to *code* changes vs \`doc… (2026-11-16)
+- [Launching pi TUI QA windows on Windows](learnings/launching-pi-tui-qa-windows-on-windows.md) — To get a visible pi TUI session for QA on Windows, launch via \`wt -w new\` — a plain \`Start-Process\` of a \`.cmd\` lands in a hidden conhost. W… (2026-11-16)
+- [TUI-only surfaces untested by headless e2e](learnings/tui-only-surfaces-untested-by-headless-e2e.md) — wikiman's e2e probes run headless (\`pi -p\`), which silently skips all UI-facing paths: confirm dialogs (staleness, migration, re-init scaffo… (2026-11-16)
+- [Fixture DLQ is genuinely unwired; ground truth must bless code-truthful readings](learnings/fixture-dlq-unwired.md) — The planted DLQ trap in the e2e fixture has no producer — the S6 agent's 'contrarian' claim that it was unwired was code-accurate. The groun… (2026-11-16)
+- [Probe tool logs accumulate across sessions without per-run clearing](learnings/probe-logs-need-per-run-clear.md) — In the wikiman-e2e gauntlet, round-1 \`.tools.log\` files accumulated across probe sessions, so blind critics grading S2/S3/S6 were partially … (2026-11-16)
+- [/wiki:stats output is TUI-only by design](learnings/wiki-stats-output-is-tui-only-by-design.md) — \`/wiki:stats\` prints nothing when run headless (exit 0, silent) because its output goes through \`ui.notify\`, which is UI-facing. Headless ve… (2026-11-16)
+- [Slash commands work headless via cmd.exe](learnings/slash-commands-work-headless-via-cmd-exe.md) — The "slash commands crash headless" gotcha is actually Git Bash / MSYS-specific path mangling, not a pi limitation. Running from cmd.exe — \`… (2026-11-16)
+- [JIT git-audit relevance pattern (R4) verified in practice](learnings/jit-git-audit-r4.md) — The agent performed a single git-audit call (log + status + last-commit stat), then read exactly the 3 recently-touched files and \`wiki_get\`… (2026-11-16)
+- [Recap dedupe gap: transcript must include wiki-tool evidence](learnings/recap-dedupe-tool-evidence.md) — \`collectTurnText\` originally captured only user/assistant text, so the recap could not see that a \`wiki_note_*\` call had already fired in-tu… (2026-11-16)
+- [shell:true concatenates argv unquoted on Windows](learnings/shell-true-concatenates-argv-unquoted-on-windows.md) — With \`shell: true\`, args are joined raw, so a \`-f\` word inside a prompt string became a pi flag (instant exit 1). Prompts must carry their o… (2026-11-16)
+- [Debounce timer dies when pi -p exits (headless recap race)](learnings/debounce-dies-headless-race.md) — The journal/recap write used a 1.2s debounce timer, which is killed when \`pi -p\` exits — the journal silently never landed in headless mode.… (2026-11-16)
+- [regenerateMemory/updateIndexNavMap tolerate missing state](learnings/regenerate-tolerates-missing.md) — \`regenerateMemory\` creates \`memory.md\` itself and \`updateIndexNavMap\` handles missing nav markers, so migrations can rely on them instead of… (2026-11-16)
+- [Migration writes shouldn't trip staleness nag](learnings/migration-writes-shouldn-t-trip-staleness-nag.md) — After migrating, bump the bundle's \`last_updated\` so the migration's own writes don't trigger the staleness nag on next session. (2026-11-16)
+- [Windows cmd.exe: use double quotes, not single](learnings/windows-cmd-exe-use-double-quotes-not-single.md) — cmd.exe does not honor single quotes — shell commands in the harness (e.g. git commit messages) must use double quotes on Windows. (2026-11-16)
+- [Baseline: wikiman answers are correct but behavior is grep-first (map-first 0/2)](learnings/baseline-grep-first.md) — E2E baseline probes P1 and P3 both passed ground truth (caught the orphaned-middleware trap, picked the right file over the twin). But debug… (2026-11-16)
+- [pi -p transcripts omit tool calls; args only on tool_execution_start](learnings/transcripts-omit-tool-args.md) — \`pi -p\` output shows only the final assistant answer — no tool-call evidence. For behavior scoring, \`WIKI_DEBUG_LOG=1\` in the agent writes a… (2026-11-16)
 
 ## Architecture
 
@@ -575,13 +1171,22 @@ structured recording tools (\`wiki_note_learning\` / \`_rule\` / \`_decision\` /
 \`_preference\` / \`_page\`), hygiene tools (\`wiki_validate\`, \`wiki_timestamp\`,
 \`wiki_changelog\`, \`wiki_mark_synced\`), staleness detection comparing code
 changes against \`docs/wiki/last_updated.md\` (git-first, mtime fallback,
-respecting \`.wiki_ignore\` plus built-in framework ignores), and five commands:
-\`/wiki\` (viewer), \`/wiki:update\`, \`/wiki:init\`, plus \`/wiki:disconnect\` /
-\`/wiki:reconnect\` — pausing the extension's proactive machinery (injection,
+respecting \`.wiki_ignore\` plus built-in framework ignores), and six commands:
+\`/wiki\` (viewer), \`/wiki:update\`, \`/wiki:init\`, \`/wiki:self-update\`
+(ask-first in-app extension update via \`pi update\`, then a \`/reload\`
+reminder; the update-available notification points here), plus
+\`/wiki:disconnect\` / \`/wiki:reconnect\` — pausing the extension's proactive machinery (injection,
 staleness, recap, curator) for a folder without deleting its \`docs/wiki/\`
 bundle (state in \`~/.pi/agent/.wiki-disconnected.json\`). \`viewer.ts\` is a
 standalone module that generates a self-contained HTML viewer for the whole
-bundle (\`wiki-viewer.html\` / \`wiki.js\` data) and serves it on localhost.
+bundle (\`wiki-viewer.html\` / \`wiki.js\` data) and serves it on localhost,
+with client-side page filtering (a sidebar search box narrows the tree).
+Releases are git tags documented in \`CHANGELOG.md\` (pin one with
+\`pi install git:github.com/monstrous-dev/wikiman@vX.Y.Z\`), and \`tests/\`
+holds the e2e gauntlet harness: \`run-probe.mjs\` (headless probe runner with
+per-run debug-log hygiene and cmd.exe-safe prompt quoting),
+\`ground-truth.md\`, \`rubric.md\`, and the \`fixture/\` generator that builds
+the acme-ops fixture.
 
 Supporting assets ship alongside the code: the end-of-turn **recap is
 self-contained** — one in-process completion call (hamster-pattern
@@ -602,14 +1207,132 @@ and \`readme.html\` is a dev-local artifact kept out of the package.
   "pages/artifacts/index.md": `# Artifacts
 
 _Documents, diagrams, and deliverables will be listed here._
+- [wikiman-e2e harness and acme-ops fixture](./wikiman-e2e-harness-and-acme-ops-fixture.md) - E2E test setup at \`C:\\Users\\PTW\\wikiman-e2e\\\`: \`acme-ops\` fixture (58 files, 4 git commits, legacy \`okf_version 0.1\` bundle, planted traps incl. ratelimit-unmou
+- [Session journal / resume card (R2)](./session-journal-resume-card-r2.md) - Completion call now returns notes + journal in one shot; entries in \`journal/2026-11.md\` with \`attempted\`/\`landed\`/\`open\` fields (empty fields omitted, journal 
+`,
+  "pages/artifacts/session-journal-resume-card-r2.md": `---
+type: Artifact
+title: Session journal / resume card (R2)
+description: Completion call now returns notes + journal in one shot; entries in \`journal/2026-11.md\` with \`attempted\`/\`landed\`/\`open\` fields (empty fields omitted, journal 
+tags: [pi-extension, journal, resume]
+timestamp: "2026-11-16T10:24:49.342Z"
+---
+
+# Session journal / resume card (R2)
+
+Completion call now returns notes + journal in one shot; entries in \`journal/2026-11.md\` with \`attempted\`/\`landed\`/\`open\` fields (empty fields omitted, journal section conditional so no empty resume card). Verified headless; P6 probe showed an agent answering continuity purely from injected journal/memory without grepping.
+`,
+  "pages/artifacts/wikiman-e2e-harness-and-acme-ops-fixture.md": `---
+type: Artifact
+title: wikiman-e2e harness and acme-ops fixture
+description: "E2E test setup at \`C:\\Users\\PTW\\wikiman-e2e\\\`: \`acme-ops\` fixture (58 files, 4 git commits, legacy \`okf_version 0.1\` bundle, planted traps incl. ratelimit-unmou"
+tags: [e2e-harness, fixture]
+timestamp: "2026-11-16T09:50:39.189Z"
+---
+
+# wikiman-e2e harness and acme-ops fixture
+
+E2E test setup at \`C:\\Users\\PTW\\wikiman-e2e\\\`: \`acme-ops\` fixture (58 files, 4 git commits, legacy \`okf_version 0.1\` bundle, planted traps incl. ratelimit-unmounted and cache.ts twin), rubric + ground truth + probe runner, transcripts in \`wikiman-e2e\\transcripts\\\`.
+
+Fixture is deliberately legacy 0.1 so the F2 migration layer can be exercised additively. Probe evidence source is \`WIKI_DEBUG_LOG=1\` debug logs, not \`pi -p\` transcripts. The harness source now lives in-repo: \`tests/fixture/generate.mjs\` builds the fixture, \`tests/run-probe.mjs\` runs probes (clearing the shared \`.wiki-debug.log\` before each run), and \`tests/ground-truth.md\` / \`tests/rubric.md\` carry the scoring bar. Planted traps include the unwired DLQ (trap #3 — no producer calls \`dlq.add\`; failed jobs stay in the \`tasks\` queue's own failed set).
 `,
   "pages/concepts/index.md": `# Concepts
 
 _Abstract ideas and definitions will be listed here._
 `,
+  "pages/entities/bundle-migration-engine-f2.md": `---
+type: Entity
+title: Bundle migration engine (F2)
+description: "Shipped F2: versioned bundle migration via \`BUNDLE_VERSION="0.2"\` with \`readBundleVersion\`/\`migrateBundle\`/\`bumpBundleVersion\`, wired into \`session_start\` and \`"
+tags: [migration, f2]
+timestamp: "2026-11-16T10:03:12.666Z"
+---
+
+# Bundle migration engine (F2)
+
+Shipped F2: versioned bundle migration via \`BUNDLE_VERSION="0.2"\` with \`readBundleVersion\`/\`migrateBundle\`/\`bumpBundleVersion\`, wired into \`session_start\` and \`/wiki:init\`. Migrations are **additive-only** — legacy 0.1 bundles get \`changelog/\`, \`journal/\`, \`memory.md\` scaffolded and the nav map injected between fresh markers without touching authored overview/glossary/learnings.
+`,
   "pages/entities/index.md": `# Entities
 
 _Concrete named things will be listed here._
+- [Inline Recap Pipeline](./inline-recap-pipeline.md) - The end-of-turn recap subsystem of \`index.ts\`: after each coding turn, one
+- [Bundle migration engine (F2)](./bundle-migration-engine-f2.md) - Shipped F2: versioned bundle migration via \`BUNDLE_VERSION="0.2"\` with \`readBundleVersion\`/\`migrateBundle\`/\`bumpBundleVersion\`, wired into \`session_start\` and \`
+- [R3 injection contract rework (planned)](./r3-injection-contract-rework-planned.md) - Next planned work: hard imperative operating contract at the top of every injection ("the map is already in your context — consult it FIRST; grep/find is the fa
+- [/wiki:self-update command](./wiki-self-update-command.md) - New extension command that performs the update loop in-app: ask-first TUI confirm, runs \`pi update git:github.com/monstrous-dev/wikiman\` (3-minute timeout), res
+`,
+  "pages/entities/inline-recap-pipeline.md": `---
+type: Entity
+title: Inline Recap Pipeline
+description: "The end-of-turn recap subsystem of \`index.ts\`: after each coding turn, one"
+tags: [recap, pipeline, index-ts, background]
+timestamp: "2026-11-16T09:18:36.521Z"
+---
+
+# Inline Recap Pipeline
+
+The end-of-turn recap subsystem of \`index.ts\`: after each coding turn, one
+in-process LLM completion mines the transcript and writes decisions, rules,
+learnings, preferences, and pages into \`docs/wiki/\` — with no subagent and no
+agentman dependency.
+
+## Why it matters
+
+It makes the wiki self-maintaining on every install (fresh installs included) and
+guarantees every LLM-proposed wiki write goes through the same validated funnel as
+the \`wiki_note_*\` tools — nothing the model says reaches disk unchecked.
+
+## Details
+
+- **Location**: \`index.ts\` — \`runInlineRecap()\` (scheduled debounced off
+  \`agent_end\`), \`parseRecapNotes()\` (fence/prose-tolerant JSON extraction), recap
+  prompt shipped in-package.
+- **Interface**: input = the turn transcript; output = a validated note list fed to
+  \`noteInto\`/\`notePage\` (the same funnel as \`wiki_note_*\`). 45 s timeout,
+  \`randomUUID\` sessionId, 2-attempt error-adaptive retry, per-note try/catch.
+- **Failure behavior**: silent degradation with no model/auth; \`.catch\` on the
+  debounced timer (session-teardown safety); model captured synchronously in
+  \`agent_end\` before the timer.
+- **Configuration**: debounce/suppress machinery unchanged from the handover;
+  \`/wiki:disconnect\` pauses it per folder.
+
+## Relationships
+
+- [recap-runs-in-process-not-via-agentman-subagent](../../decisions/recap-runs-in-process-not-via-agentman-subagent.md) — the decision behind it:
+  why in-process, alternatives rejected
+- \`noteInto\`/\`notePage\` — the only write path; identical handling to the
+  \`wiki_note_*\` tools
+- [wiki-init-ensure-semantics](../../decisions/wiki-init-ensure-semantics.md) — sibling
+  safety change in the same slice (commit \`ec1034a\`)
+
+## Lifecycle
+
+- First added: 2026-11-16, commit \`ec1034a\` — replaced the agentman subagent
+  spawn (\`agents/wiki-recap.md\` remains as a legacy copy).
+- Significant changes: runtime testing pending (fresh session or \`/reload\`).
+`,
+  "pages/entities/r3-injection-contract-rework-planned.md": `---
+type: Entity
+title: R3 injection contract rework (planned)
+description: "Next planned work: hard imperative operating contract at the top of every injection ("the map is already in your context — consult it FIRST; grep/find is the fa"
+tags: [r3, injection, roadmap]
+timestamp: "2026-11-16T10:03:12.688Z"
+---
+
+# R3 injection contract rework (planned)
+
+Next planned work: hard imperative operating contract at the top of every injection ("the map is already in your context — consult it FIRST; grep/find is the fallback"), compact ranked nav slice, and injection budget caps — targeting the baseline's grep-first behavior. Followed by R2 (journal + resume card).
+`,
+  "pages/entities/wiki-self-update-command.md": `---
+type: Entity
+title: "/wiki:self-update command"
+description: "New extension command that performs the update loop in-app: ask-first TUI confirm, runs \`pi update git:github.com/monstrous-dev/wikiman\` (3-minute timeout), res"
+tags: [extension, self-update]
+timestamp: "2026-11-16T12:30:45.539Z"
+---
+
+# /wiki:self-update command
+
+New extension command that performs the update loop in-app: ask-first TUI confirm, runs \`pi update git:github.com/monstrous-dev/wikiman\` (3-minute timeout), resets the update-check throttle, and notifies with updater output. Headless sessions fall back to printing the manual CLI command since the confirm needs the TUI. The session-start update-available notification points at this command as well. Note the running session keeps executing the old code until \`/reload\` — see [[extensions-load-at-session-start-only]].
 `,
   "pages/index.md": `# Pages
 
@@ -618,6 +1341,12 @@ Knowledge graph: concepts, entities, and artifacts that make up this project.
 - [Concepts](./concepts/) — Abstract ideas, definitions, and categories
 - [Entities](./entities/) — Concrete named things, systems, tools, and records
 - [Artifacts](./artifacts/) — Documents, diagrams, code files, and deliverables
+- [Inline Recap Pipeline](./entities/inline-recap-pipeline.md) — The end-of-turn recap subsystem of \`index.ts\`: after each coding turn, one
+- [wikiman-e2e harness and acme-ops fixture](./artifacts/wikiman-e2e-harness-and-acme-ops-fixture.md) — E2E test setup at \`C:\\Users\\PTW\\wikiman-e2e\\\`: \`acme-ops\` fixture (58 files, 4 git commits, legacy \`okf_version 0.1\` bundle, planted traps incl. ratelimit-unmou
+- [Bundle migration engine (F2)](./entities/bundle-migration-engine-f2.md) — Shipped F2: versioned bundle migration via \`BUNDLE_VERSION="0.2"\` with \`readBundleVersion\`/\`migrateBundle\`/\`bumpBundleVersion\`, wired into \`session_start\` and \`
+- [R3 injection contract rework (planned)](./entities/r3-injection-contract-rework-planned.md) — Next planned work: hard imperative operating contract at the top of every injection ("the map is already in your context — consult it FIRST; grep/find is the fa
+- [Session journal / resume card (R2)](./artifacts/session-journal-resume-card-r2.md) — Completion call now returns notes + journal in one shot; entries in \`journal/2026-11.md\` with \`attempted\`/\`landed\`/\`open\` fields (empty fields omitted, journal
+- [/wiki:self-update command](./entities/wiki-self-update-command.md) — New extension command that performs the update loop in-app: ask-first TUI confirm, runs \`pi update git:github.com/monstrous-dev/wikiman\` (3-minute timeout), res
 `,
   "pages/TEMPLATES.md": `---
 type: Concept
@@ -691,7 +1420,63 @@ a stable structure so pages are consistent, skimmable, and well-linked.
 - Generated from: [what data, process, or session produced it]
 \`\`\`
 `,
-  "rules/bundle-migrations-are-additive-only-idempotent-and-always-as.md": `---
+  "rules/exact-title-dedupe-funnel.md": `---
+type: Rule
+title: Exact-title duplicates rejected at the funnel level
+description: "\`wiki_note_*\` calls with an exact duplicate title return "Already recorded — id — reference as [[wikilink]]" instead of writing. Always reference existing notes"
+tags: [wiki, dedupe]
+timestamp: "2026-11-16T10:34:27.280Z"
+---
+
+# Exact-title duplicates rejected at the funnel level
+
+\`wiki_note_*\` calls with an exact duplicate title return "Already recorded — id — reference as [[wikilink]]" instead of writing. Always reference existing notes via wikilink rather than re-recording, even when phrasing differs.
+`,
+  "rules/generated-files-validator-invisible.md": `---
+type: Rule
+title: Auto-generated files in docs/wiki/ must be validator-invisible
+description: Journal \`.md\` files without frontmatter tripped validator E1, and \`wiki_mark_synced\` refuses while errors exist — so agents burned tool calls fabricating frontm
+tags: [wiki, validator, rule]
+timestamp: "2026-11-16T10:24:49.330Z"
+---
+
+# Auto-generated files in docs/wiki/ must be validator-invisible
+
+Journal \`.md\` files without frontmatter tripped validator E1, and \`wiki_mark_synced\` refuses while errors exist — so agents burned tool calls fabricating frontmatter (repair-fighting the writer, E3 on \`type: Journal\`). Rule: exclude any auto-generated file (e.g. \`journal/\`) from the wiki walk everywhere — validator, nav map, memory digest, search, viewer. Episodic ≠ semantic.
+`,
+  "rules/index.md": `# Rules
+
+- [Bundle migrations are additive-only, idempotent, and always ask-first](./migrations-additive-ask-first.md) - **Guideline**: Any new docs/wiki/ bundle surface or feature must ship as an **additive-only, idempotent migration step** keyed on a bump of the bundle's \`okf_ve
+- [Migration prompts: ask in UI, silent headless](./migration-prompts-ask-in-ui-silent-headless.md) - Bundle version migration prompts ask-first in the real UI but migrate silently in headless/RPC sessions, with per-cwd + per-version decline memory. Verified via
+- [Auto-generated files in docs/wiki/ must be validator-invisible](./generated-files-validator-invisible.md) - Journal \`.md\` files without frontmatter tripped validator E1, and \`wiki_mark_synced\` refuses while errors exist — so agents burned tool calls fabricating frontm
+- [Exact-title duplicates rejected at the funnel level](./exact-title-dedupe-funnel.md) - \`wiki_note_*\` calls with an exact duplicate title return "Already recorded — id — reference as [[wikilink]]" instead of writing. Always reference existing notes
+- [Match the task, not the recency (contract rule 5)](./match-the-task-not-the-recency-contract-rule-5.md) - Probe agents should open exactly the concepts named by the task, not chase recently-viewed files. Enforcing this halved session durations (S2 116→54s, S4 158→66
+`,
+  "rules/match-the-task-not-the-recency-contract-rule-5.md": `---
+type: Rule
+title: Match the task, not the recency (contract rule 5)
+description: Probe agents should open exactly the concepts named by the task, not chase recently-viewed files. Enforcing this halved session durations (S2 116→54s, S4 158→66
+tags: [contract, harness]
+timestamp: "2026-11-16T11:38:34.737Z"
+---
+
+# Match the task, not the recency (contract rule 5)
+
+Probe agents should open exactly the concepts named by the task, not chase recently-viewed files. Enforcing this halved session durations (S2 116→54s, S4 158→66s) and eliminated off-task reads in round 2.
+`,
+  "rules/migration-prompts-ask-in-ui-silent-headless.md": `---
+type: Rule
+title: "Migration prompts: ask in UI, silent headless"
+description: Bundle version migration prompts ask-first in the real UI but migrate silently in headless/RPC sessions, with per-cwd + per-version decline memory. Verified via
+tags: [migration, ux]
+timestamp: "2026-11-16T10:03:12.677Z"
+---
+
+# Migration prompts: ask in UI, silent headless
+
+Bundle version migration prompts ask-first in the real UI but migrate silently in headless/RPC sessions, with per-cwd + per-version decline memory. Verified via a headless probe session that migrated a legacy 0.1 bundle end-to-end (\`okf_version\` bumped, scaffolds created, migration journaled).
+`,
+  "rules/migrations-additive-ask-first.md": `---
 type: Rule
 title: Bundle migrations are additive-only, idempotent, and always ask-first
 description: "**Guideline**: Any new docs/wiki/ bundle surface or feature must ship as an **additive-only, idempotent migration step** keyed on a bump of the bundle's \`okf_ve"
@@ -715,10 +1500,6 @@ timestamp: "2026-11-16T08:48:51.978Z"
 
 **Rationale**: bundles are user data scattered across many repos; extension updates must reach them without data loss (evidence: the \`/wiki:init\` re-init overwrite bug — see learnings).
 `,
-  "rules/index.md": `# Rules
-
-- [Bundle migrations are additive-only, idempotent, and always ask-first](./bundle-migrations-are-additive-only-idempotent-and-always-as.md) - **Guideline**: Any new docs/wiki/ bundle surface or feature must ship as an **additive-only, idempotent migration step** keyed on a bump of the bundle's \`okf_ve
-`,
 };
 var WIKI_PAGES = [
     { path: "index.md", label: "Project Knowledge Wiki", group: "" },
@@ -726,21 +1507,57 @@ var WIKI_PAGES = [
     { path: "memory.md", label: "Memory — the live contract", group: "" },
     { path: "overview.md", label: "Overview", group: "" },
     { path: "architecture/file-tree.md", label: "File tree", group: "Architecture" },
+    { path: "decisions/acceptance-bar-native-skill.md", label: "Acceptance bar redefined: OKF wiki as a native LLM skill, 9/10 rubric on real transcripts", group: "Decisions" },
     { path: "decisions/index.md", label: "Decisions", group: "Decisions" },
-    { path: "decisions/disconnect-reconnect-state-lives-in-agent-home-keyed-per-cwd.md", label: "Disconnect/reconnect state lives in agent home, keyed per cwd", group: "Decisions" },
-    { path: "decisions/update-propagation-okf-version-gated-additive-bundle-migrati.md", label: "Update propagation: okf_version-gated additive bundle migrations + prompt-in-package", group: "Decisions" },
-    { path: "learnings/wiki-init-on-an-existing-bundle-destroys-authored-content-on.md", label: "/wiki:init on an existing bundle destroys authored content (only pages/ is guarded)", group: "Learnings" },
-    { path: "learnings/handover-roadmap-status-1-of-11-items-done-next-slice-is-r1-.md", label: "Handover roadmap status: 1 of 11 items done — next slice is R1 + F1 + curator inlining", group: "Learnings" },
+    { path: "decisions/disconnect-state-agent-home.md", label: "Disconnect/reconnect state lives in agent home, keyed per cwd", group: "Decisions" },
+    { path: "decisions/gauntlet-bar-llm-memory-e2e.md", label: "Gauntlet acceptance bar: 9/10 LLM memory with self-learning, verified e2e", group: "Decisions" },
+    { path: "decisions/r3-nav-injection-replaces-grep-first-exploration.md", label: "R3 nav injection replaces grep-first exploration", group: "Decisions" },
+    { path: "decisions/recap-runs-in-process-not-via-agentman-subagent.md", label: "Recap runs in-process, not via agentman subagent", group: "Decisions" },
+    { path: "decisions/update-propagation-okf-migrations.md", label: "Update propagation: okf_version-gated additive bundle migrations + prompt-in-package", group: "Decisions" },
+    { path: "decisions/wiki-init-ensure-semantics.md", label: "Wiki:init is ensure-semantics — never overwrites authored content", group: "Decisions" },
+    { path: "learnings/wiki-init-data-loss.md", label: "/wiki:init re-init data loss (F1) — FIXED via ensure-semantics init", group: "Learnings" },
+    { path: "learnings/wiki-stats-output-is-tui-only-by-design.md", label: "/wiki:stats output is TUI-only by design", group: "Learnings" },
+    { path: "learnings/background-wiki-sync-fallback.md", label: "Background wiki sync fallback: hidden queued message with 1h cooldown", group: "Learnings" },
+    { path: "learnings/background-sync-footer-approximate.md", label: "Background-sync 'synced' footer state is an approximation", group: "Learnings" },
+    { path: "learnings/baseline-grep-first.md", label: "Baseline: wikiman answers are correct but behavior is grep-first (map-first 0/2)", group: "Learnings" },
+    { path: "learnings/debounce-dies-headless-race.md", label: "Debounce timer dies when pi -p exits (headless recap race)", group: "Learnings" },
+    { path: "learnings/extensions-load-at-session-start-only.md", label: "Extensions load at session start only", group: "Learnings" },
+    { path: "learnings/fixture-dlq-unwired.md", label: "Fixture DLQ is genuinely unwired; ground truth must bless code-truthful readings", group: "Learnings" },
+    { path: "learnings/handover-roadmap-slice-2.md", label: "Handover roadmap status: 4 of ~11 items done — next slice is F2 + R2", group: "Learnings" },
+    { path: "learnings/handover-roadmap-slice-1.md", label: "Handover roadmap: R1 + F1 + curator slice done (ec1034a) — next is R2 journal", group: "Learnings" },
+    { path: "learnings/jit-git-audit-r4.md", label: "JIT git-audit relevance pattern (R4) verified in practice", group: "Learnings" },
+    { path: "learnings/launching-pi-tui-qa-windows-on-windows.md", label: "Launching pi TUI QA windows on Windows", group: "Learnings" },
     { path: "learnings/index.md", label: "Learnings", group: "Learnings" },
-    { path: "learnings/new-pi-extension-commands-need-a-fresh-session-or-reload-tes.md", label: "New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p", group: "Learnings" },
-    { path: "learnings/okf-version-frontmatter-is-stamped-at-scaffold-but-never-con.md", label: "okf_version frontmatter is stamped at scaffold but never consumed", group: "Learnings" },
-    { path: "learnings/type-check-baseline-is-21-pre-existing-peer-dep-errors-verif.md", label: "Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff", group: "Learnings" },
+    { path: "learnings/migration-writes-shouldn-t-trip-staleness-nag.md", label: "Migration writes shouldn't trip staleness nag", group: "Learnings" },
+    { path: "learnings/new-commands-need-reload.md", label: "New pi extension commands need a fresh session or /reload; test in the TUI, not pi -p", group: "Learnings" },
+    { path: "learnings/okf-version-never-checked.md", label: "okf_version frontmatter is stamped at scaffold but never consumed", group: "Learnings" },
+    { path: "learnings/transcripts-omit-tool-args.md", label: "pi -p transcripts omit tool calls; args only on tool_execution_start", group: "Learnings" },
+    { path: "learnings/probe-logs-need-per-run-clear.md", label: "Probe tool logs accumulate across sessions without per-run clearing", group: "Learnings" },
+    { path: "learnings/recap-dedupe-tool-evidence.md", label: "Recap dedupe gap: transcript must include wiki-tool evidence", group: "Learnings" },
+    { path: "learnings/regenerate-tolerates-missing.md", label: "regenerateMemory/updateIndexNavMap tolerate missing state", group: "Learnings" },
+    { path: "learnings/shell-true-concatenates-argv-unquoted-on-windows.md", label: "shell:true concatenates argv unquoted on Windows", group: "Learnings" },
+    { path: "learnings/slash-commands-work-headless-via-cmd-exe.md", label: "Slash commands work headless via cmd.exe", group: "Learnings" },
+    { path: "learnings/tool-contexts-extend-the-full-extension-context.md", label: "Tool contexts extend the full extension context", group: "Learnings" },
+    { path: "learnings/tui-only-surfaces-untested-by-headless-e2e.md", label: "TUI-only surfaces untested by headless e2e", group: "Learnings" },
+    { path: "learnings/typecheck-baseline-21-errors.md", label: "Type-check baseline is 21 pre-existing peer-dep errors — verify by before/after diff", group: "Learnings" },
+    { path: "learnings/wiki-sync-trigger-map.md", label: "Wiki sync triggers: command vs staleness check vs version flows", group: "Learnings" },
+    { path: "learnings/windows-cmd-exe-use-double-quotes-not-single.md", label: "Windows cmd.exe: use double quotes, not single", group: "Learnings" },
     { path: "pages/TEMPLATES.md", label: "Page Templates", group: "Pages" },
     { path: "pages/index.md", label: "Pages", group: "Pages" },
     { path: "pages/artifacts/index.md", label: "Artifacts", group: "Pages / Artifacts" },
+    { path: "pages/artifacts/session-journal-resume-card-r2.md", label: "Session journal / resume card (R2)", group: "Pages / Artifacts" },
+    { path: "pages/artifacts/wikiman-e2e-harness-and-acme-ops-fixture.md", label: "wikiman-e2e harness and acme-ops fixture", group: "Pages / Artifacts" },
     { path: "pages/concepts/index.md", label: "Concepts", group: "Pages / Concepts" },
+    { path: "pages/entities/wiki-self-update-command.md", label: "/wiki:self-update command", group: "Pages / Entities" },
+    { path: "pages/entities/bundle-migration-engine-f2.md", label: "Bundle migration engine (F2)", group: "Pages / Entities" },
     { path: "pages/entities/index.md", label: "Entities", group: "Pages / Entities" },
-    { path: "rules/bundle-migrations-are-additive-only-idempotent-and-always-as.md", label: "Bundle migrations are additive-only, idempotent, and always ask-first", group: "Rules" },
+    { path: "pages/entities/inline-recap-pipeline.md", label: "Inline Recap Pipeline", group: "Pages / Entities" },
+    { path: "pages/entities/r3-injection-contract-rework-planned.md", label: "R3 injection contract rework (planned)", group: "Pages / Entities" },
+    { path: "rules/generated-files-validator-invisible.md", label: "Auto-generated files in docs/wiki/ must be validator-invisible", group: "Rules" },
+    { path: "rules/migrations-additive-ask-first.md", label: "Bundle migrations are additive-only, idempotent, and always ask-first", group: "Rules" },
+    { path: "rules/exact-title-dedupe-funnel.md", label: "Exact-title duplicates rejected at the funnel level", group: "Rules" },
+    { path: "rules/match-the-task-not-the-recency-contract-rule-5.md", label: "Match the task, not the recency (contract rule 5)", group: "Rules" },
+    { path: "rules/migration-prompts-ask-in-ui-silent-headless.md", label: "Migration prompts: ask in UI, silent headless", group: "Rules" },
     { path: "rules/index.md", label: "Rules", group: "Rules" }
 ];
 (function(){
@@ -765,5 +1582,23 @@ bb.addEventListener("click",gb);fb.addEventListener("click",gf);hm.addEventListe
 bt();var ip="index.md";if(window.location.hash){var hp=window.location.hash.substring(1);if(hp.endsWith(".md")||hp.endsWith("/")){ip=hp.replace(/^\.\//,"");if(ip.endsWith("/"))ip+="index.md"}}nn(ip,true);
 })();
   </script>
+<script>
+(function(){
+  var inp=document.getElementById("wikiSearch");
+  if(!inp)return;
+  inp.addEventListener("input",function(){
+    var q=inp.value.toLowerCase().trim();
+    var shown=0;
+    document.querySelectorAll(".tree-item").forEach(function(b){
+      var hit=!q||b.textContent.toLowerCase().indexOf(q)>=0;
+      b.style.display=hit?"":"none";
+      if(hit)shown++;
+    });
+    document.querySelectorAll(".tree-group-label").forEach(function(l){
+      l.style.display=q?"none":"";
+    });
+  });
+})();
+</script>
 </body>
 </html>

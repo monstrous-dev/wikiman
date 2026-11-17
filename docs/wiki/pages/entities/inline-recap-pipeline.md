@@ -39,7 +39,7 @@ the `wiki_note_*` tools — nothing the model says reaches disk unchecked.
   why in-process, alternatives rejected
 - `noteInto`/`notePage` — the only write path; identical handling to the
   `wiki_note_*` tools
-- [wiki-init-is-ensure-semantics-never-overwrites-authored-cont](../../decisions/wiki-init-is-ensure-semantics-never-overwrites-authored-cont.md) — sibling
+- [wiki-init-ensure-semantics](../../decisions/wiki-init-ensure-semantics.md) — sibling
   safety change in the same slice (commit `ec1034a`)
 
 ## Lifecycle
